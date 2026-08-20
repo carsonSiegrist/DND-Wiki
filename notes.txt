@@ -1,0 +1,95 @@
+wiki for my upcoming D&D campaign. 
+I want the wiki to be entirely player-driven, and easy to navigate.
+It will by default have only one category, recaps. This will be for session recaps. I was considering forcing a title like "Session X", but I think I'll just make session number a mandatory field. 
+Other articles will be as players desire, but I'd suggest something like world or faction information.
+
+So, I think this will require user accounts for creating and editing files. I think for recaps I'll limit it to just the author and people that the designate as editors to change files. 
+It'll largely be markdown style editing so that players can have an easy time with limited technical skills doing some formatting. Eventual image support, not sure how I want that to be for the users.
+
+Then, after the basic wiki is in place, I want to create a shop that is managed through the same website. Maybe a different sublink like shop.campaign.com or something. 
+This way I can just stock a merchant and the players can asynchronously spend their money; this will be an honor system based thing for the actual spending of gold. 
+For players selling items for gold, I'll have a basic list of many common items, then maybe a form for players to submit a sell ticket. It'll be something like <item> <quantity> <cost/unit> 
+If I approve it, that will add it to the items table as something that can be sold at that price. 
+If I reject it, it should somehow notify the player that it was rejected, and optionally that a lower price would be paid. 
+All of the shopping will have in-depth logs. 
+
+
+So technical side of things: 
+
+Wikipages should be stored in a DB, retrieved as they are accessed. 
+
+Main page should have something like a list of categories somewhere, maybe a list of recent articles, and a sign in page (this should be on a universal header) and a blurb for what the wiki is for. 
+
+Caregories should be creatable by anyone; removeable/editable by moderators only. 
+
+Pages should be created under a category; editable by anyone. Edit history also viewable by anyone. 
+
+So the plan is: 
+
+Users/auth
+Pages + revisions
+Markdown rendering
+Page browsing/search
+Categories
+Wiki links
+Permissions
+Recap-specific metadata
+Images
+Shop
+
+
+
+----------------------------------
+Database core schema 
+
+users
+- id                  PRIMARY KEY
+- username            NOT NULL, UNIQUE
+- email               NOT NULL, UNIQUE
+- password_hash       NOT NULL
+- role                NOT NULL
+- created_at          NOT NULL
+
+categories
+- id                  PRIMARY KEY
+- name                NOT NULL, UNIQUE
+- slug                NOT NULL, UNIQUE
+- description         nullable
+- created_by          NOT NULL, FK -> users.id
+- created_at          NOT NULL
+
+pages
+- id                  PRIMARY KEY
+- title               NOT NULL
+- slug                NOT NULL, UNIQUE
+- page_type           NOT NULL
+- created_by          NOT NULL, FK -> users.id
+- created_at          NOT NULL
+- updated_at          NOT NULL
+- session_number      nullable
+- current_revision_id nullable, FK -> page_revisions.id
+
+page_categories
+- page_id             NOT NULL, FK -> pages.id
+- category_id         NOT NULL, FK -> categories.id
+
+PRIMARY KEY (page_id, category_id)
+
+page_revisions
+- id                  PRIMARY KEY
+- page_id             NOT NULL, FK -> pages.id
+- author_id           NOT NULL, FK -> users.id
+- body_markdown       NOT NULL
+- created_at          NOT NULL
+- edit_summary        nullable
+- revision_number     NOT NULL
+
+UNIQUE (page_id, revision_number)
+
+page_links
+- id                  PRIMARY KEY
+- source_page_id      NOT NULL, FK -> pages.id
+- target_page_id      nullable, FK -> pages.id
+- target_title        NOT NULL
+
+UNIQUE (source_page_id, target_title)
