@@ -65,4 +65,46 @@ Wiki pages can ink to other pages by title. They will be created with the follow
 
 Links may point to pages that do not yet exist. This allows players to reference discovered people, locations, factions, or concepts before someone has written an article about them. 
 Once the target page is created, those links can automatically resolve to the new page. 
-This should allow the wiki to easily grow organically, rather than requiring pages to be created in a particular order. It will also allow for a "Most Wanted Pages" feature on the main page, indicating which pages are referenced by the most articles that have yet to be created. 
+This should allow the wiki to easily grow organically, rather than requiring pages to be created in a particular order. 
+
+This will also allow for a "Most Wanted Pages" feature on the main page, indicating which pages are referenced by the most articles that have yet to be created. 
+
+## Revision History
+
+Page edits will be stored as revisions rather than replacing the previsou version. Each revision will contain information such as:
+
+- Author
+- Creation datetime
+- Markdown content
+- Edit summary
+- Revision number
+
+Revision history will make it possible to inspect a page's history and restoration of older versions. 
+
+## Project Status
+
+This project is currently in early development.
+
+The initial focus is on the core wiki functionality:
+- User accounts
+- Page creation
+- Markdown editing
+- Page linking
+- Session recaps
+- Revision history
+- Editing permissions
+- Basic navigation and search
+
+Addition features will be added as the needs of the campaign become clearer.
+
+## Design Philosophies
+
+The design philosophies of this wiki are heavily inspired by the design philosophies of the west marches style of play. 
+
+This wiki is not intended to be a complete canonical encyclopedia maintained by the GM.
+
+It is meant to represent the campaign as the players experience and record it.
+
+Information may be incomplete, speculative, outdated, or written from a particular character's perspective. That is part of the intended experience.
+
+The wiki should become a shared record of exploration: what the players have discovered, what they believe, what they consider important, and how their understanding of the campaign world changes over time.
