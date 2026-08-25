@@ -1,7 +1,6 @@
 # /routes/auth.py
-
-from flask import Blueprint, render_template
-from werkzeug.security import generate_password_hash
+from flask import Blueprint, render_template, redirect, url_for
+from sqlalchemy.exc import IntegrityError
 
 import models
 from extensions import db, login_manager

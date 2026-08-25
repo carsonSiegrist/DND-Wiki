@@ -2,10 +2,12 @@
 
 import os
 
+from dotenv import load_dotenv
 from flask import Flask
 
 from extensions import db, login_manager
 
+load_dotenv()
 
 def create_app():
     app = Flask(__name__)
