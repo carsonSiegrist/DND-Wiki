@@ -1,0 +1,29 @@
+<!DOCTYPE html> 
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>D&D Wiki - Create Account</title>
+</head>
+
+<body>
+    <form method="POST">
+        
+        <!-- CRITICAL: This injects the hidden CSRF token -->
+        {{ form.hidden_tag() }}
+        
+        <label for="username">Username:</label>
+        {{ form.username(id="username") }}
+        
+        <label for="email">Email:</label>
+        {{ form.email(id="email") }}
+        
+        <label for="password">Password:</label>
+        {{ form.password(id="password") }}
+        
+        <label for="password_check">Confirm Password:</label>
+        {{ form.password_check(id="password_check") }}
+        
+        {{ form.submit() }}
+    </form>
+</body>
+</html>

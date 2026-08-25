@@ -49,6 +49,14 @@ class User(db.Model):
         """Check if the provided password matches the user's password hash."""
         return check_password_hash(self.password_hash, password)
 
+    #Flask Login required properties/methods:
+    is_authenticated = True #TODO: Figure out what this is supposed to represent. 
+    is_active = True #This should be marked false to suspend an account. 
+    is_anonymous = False 
+    def get_id(self) -> str: 
+        return str(self.id)
+
+
 
 class Categories(db.Model):
     __tablename__ = "categories"

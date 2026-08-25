@@ -11,6 +11,10 @@ from textwrap import dedent
 
 # Minimal test requires a user, a page, and a revision.
 def run_test():
+    if user := models.User.query.filter_by(username="testuser").first():
+        print("Test user already exists. Skipping creation.")
+        return
+
     try:
         #Create user
         user = models.User(
@@ -72,6 +76,10 @@ def run_test():
 
 
 def delete_test():
+    if not (user := models.User.query.filter_by(username="testuser").first()):
+        print("Test user does not exist. Skipping deletion.")
+        return
+
     #Delete the test user, page, and revision created by run_test()
     try:
         user = models.User.query.filter_by(username="testuser").first()
