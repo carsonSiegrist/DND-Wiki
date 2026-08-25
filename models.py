@@ -1,13 +1,14 @@
 from datetime import datetime, timezone
 from sqlalchemy import String, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
+from flask_login import UserMixin
 
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from app import db
 
 
-class User(db.Model):
+class User(db.Model, UserMixin):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -48,13 +49,6 @@ class User(db.Model):
     def check_password(self, password: str) -> bool:
         """Check if the provided password matches the user's password hash."""
         return check_password_hash(self.password_hash, password)
-
-    #Flask Login required properties/methods:
-    is_authenticated = True #TODO: Figure out what this is supposed to represent. 
-    is_active = True #This should be marked false to suspend an account. 
-    is_anonymous = False 
-    def get_id(self) -> str: 
-        return str(self.id)
 
 
 

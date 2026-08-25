@@ -8,7 +8,18 @@
 <body>
     <form method="POST">
         
-        <!-- CRITICAL: This injects the hidden CSRF token -->
+        <!-- Display All Errors -->
+        {% if form.errors %}
+            <ul>
+                {% for field_name, error_messages in form.errors.items() %}
+                    {% for error in error_messages %}
+                    <li><strong>{{ field_name.title() }}:</strong>{{ error }}</li>
+                    {% endfor %}
+                {% endfor %}
+            </ul>
+        {% endif %}
+
+        <!-- This injects the hidden CSRF token -->
         {{ form.hidden_tag() }}
         
         <label for="username">Username:</label>

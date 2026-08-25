@@ -10,7 +10,7 @@
         {% for page in pages %}
             <li><a href="/page/{{ page.slug }}">{{ page.title }}</a></li>
         {% endfor %}
-            <li><a href="/register">register</a></li>
+            <li><a href="/auth/register">register</a></li>
 
         {% if not pages %}
             <li>No pages found.</li>
