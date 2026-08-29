@@ -2,12 +2,12 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>D&D Wiki - Create Account</title>
+    <title>D&D Wiki - Log In</title>
 </head>
 
 <body>
     <form method="POST">
-        
+
         <!-- Grab flashes from flask-->
          {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
@@ -23,19 +23,13 @@
             {% endif %}
         {% endwith %}
 
+
         <!-- This injects the hidden CSRF token -->
         {{ form.hidden_tag() }}
         
         <label for="username">Username:</label>
         {{ form.username(id="username") }}
         {% for error in form.username.errors %}
-            <span class="error">{{ error }}</span><br>
-        {% endfor %}
-        <br>
-
-        <label for="email">Email:</label>
-        {{ form.email(id="email") }}
-        {% for error in form.email.errors %}
             <span class="error">{{ error }}</span><br>
         {% endfor %}
         <br>
@@ -46,15 +40,6 @@
             <span class="error">{{ error }}</span><br>
         {% endfor %}
         <br>
-
-        
-        <label for="password_check">Confirm Password:</label>
-        {{ form.password_check(id="password_check") }}
-        {% for error in form.password_check.errors %}
-            <span class="error">{{ error }}</span><br>
-        {% endfor %}
-        <br>
-
 
         {{ form.submit() }}
     </form>
