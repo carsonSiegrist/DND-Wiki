@@ -5,6 +5,21 @@
     <title>D&D Wiki - {{ page.title }}</title>
 </head>
 <body>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            <ul class="flashes">
+                {% for category, message in messages %}
+                    <li class="{{ category }}">{{ message }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+    {% endwith %}
+
     {{rendered_body | safe}}
+    {% if clear_page_draft %}
+        <script>
+            localStorage.removeItem("wiki-page-draft-{{ current_user.id }}");
+        </script>
+    {% endif %}
 </body>
 </html>

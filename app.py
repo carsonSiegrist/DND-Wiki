@@ -9,11 +9,14 @@ from extensions import db, login_manager
 
 load_dotenv()
 
-def create_app():
+def create_app(test_config=None):
     app = Flask(__name__)
 
     app.config["SECRET_KEY"] = os.getenv("SECRET_KEY")
     app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL")
+
+    if test_config is not None:
+        app.config.update(test_config)
 
     db.init_app(app)
     login_manager.init_app(app)

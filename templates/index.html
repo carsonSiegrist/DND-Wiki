@@ -24,6 +24,7 @@
         {% if current_user.is_authenticated %}
         <p>Logged in as: <strong>{{ current_user.username }}</strong></p>
         <a href="{{ url_for('auth.logout') }}">Log Out.</a>
+        <a href="{{ url_for('pages.create_page') }}">Create Page</a>
         {% endif %}
         {% for page in pages %}
             <li><a href="{{ url_for('pages.view_page', slug=page.slug) }}">{{ page.title }}</a></li>
