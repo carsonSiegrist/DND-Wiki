@@ -461,6 +461,7 @@ class PageCreationTestCase(unittest.TestCase):
             target = models.Pages.query.filter_by(title="Target Page").one()
             links = models.PageLinks.query.filter_by(source_page_id=source.id).all()
             links_by_title = {link.target_title: link for link in links}
+            target_id = target.id
 
             self.assertEqual(len(links), 2)
             self.assertEqual(links_by_title["Target Page"].target_page_id, target.id)
@@ -468,7 +469,10 @@ class PageCreationTestCase(unittest.TestCase):
 
         rendered_response = self.client.get("/pages/view/source-page")
         self.assertIn(
-            b'class="wiki-hyperlink" href="/pages/view/target-page">Target Page</a>',
+            (
+                f'class="wiki-hyperlink" href="/pages/id/{target_id}">'
+                "Target Page</a>"
+            ).encode(),
             rendered_response.data,
         )
         self.assertIn(
@@ -549,7 +553,49 @@ class PageCreationTestCase(unittest.TestCase):
                 source_page_id=source.id,
                 target_title="Target Page",
             ).one()
-            self.assertIsNone(target_link.target_page_id)
+            self.assertEqual(target_link.target_page_id, target_id)
+
+        stable_link_response = self.client.get(f"/pages/id/{target_id}")
+        self.assertEqual(stable_link_response.status_code, 302)
+        self.assertTrue(
+            stable_link_response.headers["Location"].endswith(
+                "/pages/view/renamed-target"
+            )
+        )
+
+        renamed_render_response = self.client.get("/pages/view/source-page")
+        self.assertIn(
+            (
+                f'class="wiki-hyperlink" href="/pages/id/{target_id}">'
+                "Target Page</a>"
+            ).encode(),
+            renamed_render_response.data,
+        )
+
+        alias_edit_response = self.client.post(
+            "/pages/edit/source-page",
+            data={
+                "title": "Source Page",
+                "body_markdown": (
+                    "Old label [[Target Page]] and current label "
+                    "[[Renamed Target]]."
+                ),
+                "edit_summary": "Used both target titles",
+            },
+        )
+        self.assertEqual(alias_edit_response.status_code, 302)
+
+        with self.app.app_context():
+            source = models.Pages.query.filter_by(title="Source Page").one()
+            links = models.PageLinks.query.filter_by(source_page_id=source.id).all()
+            self.assertEqual(len(links), 1)
+            self.assertEqual(links[0].target_page_id, target_id)
+
+        both_labels_response = self.client.get("/pages/view/source-page")
+        stable_href = f'href="/pages/id/{target_id}"'.encode()
+        self.assertEqual(both_labels_response.data.count(stable_href), 2)
+        self.assertIn(b">Target Page</a>", both_labels_response.data)
+        self.assertIn(b">Renamed Target</a>", both_labels_response.data)
 
         replacement_response = self.client.post(
             "/pages/new",
@@ -558,10 +604,19 @@ class PageCreationTestCase(unittest.TestCase):
                 "body_markdown": "Replacement target",
             },
         )
-        self.assertEqual(replacement_response.status_code, 302)
+        self.assertEqual(replacement_response.status_code, 200)
+        self.assertIn(
+            b"That title was previously used by a wiki page and is reserved",
+            replacement_response.data,
+        )
+
+        with self.app.app_context():
+            self.assertIsNone(
+                models.Pages.query.filter_by(title="Target Page").first()
+            )
 
         self.login_as(self.admin_id)
-        delete_response = self.client.post("/pages/delete/target-page")
+        delete_response = self.client.post("/pages/delete/renamed-target")
         self.assertEqual(delete_response.status_code, 302)
 
         with self.app.app_context():
@@ -571,6 +626,16 @@ class PageCreationTestCase(unittest.TestCase):
                 target_title="Target Page",
             ).one()
             self.assertIsNone(target_link.target_page_id)
+            aliases = models.PageTitleAliases.query.filter(
+                models.PageTitleAliases.title.in_(
+                    {"Target Page", "Renamed Target"}
+                )
+            ).all()
+            self.assertEqual(
+                {alias.title for alias in aliases},
+                {"Target Page", "Renamed Target"},
+            )
+            self.assertTrue(all(alias.page_id is None for alias in aliases))
 
         unresolved_response = self.client.get("/pages/view/source-page")
         self.assertIn(

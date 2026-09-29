@@ -24,6 +24,10 @@ pages_bp = Blueprint("pages", __name__, url_prefix="/pages")
 ADMIN_ROLE = "admin"
 REGULAR_PAGE_TYPES = {"article", "recap"}
 WIKI_LINK_PATTERN = re.compile(r"\[\[([^\[\]\n]+)\]\]")
+HISTORICAL_TITLE_ERROR = (
+    "That title was previously used by a wiki page and is reserved so old "
+    "links keep working. Please choose a different title."
+)
 
 
 def is_admin():
@@ -32,6 +36,12 @@ def is_admin():
 
 def can_edit_page(page):
     return is_admin() or page.page_type in REGULAR_PAGE_TYPES
+
+
+@pages_bp.route("/id/<int:page_id>", methods=["GET"])
+def view_page_by_id(page_id):
+    page = db.get_or_404(models.Pages, page_id)
+    return redirect(url_for("pages.view_page", slug=page.slug))
 
 
 @pages_bp.route("/view/<slug>", methods=["GET"])
@@ -181,8 +191,8 @@ def create_page():
     if form.validate_on_submit():
         if page_type == "recap" and form.session_number.data is None:
             form.session_number.errors.append("Recaps require a session number!")
-        elif page_title_exists(form.title.data):
-            form.title.errors.append("A page with that title already exists.")
+        elif not validate_page_title(form):
+            pass
         else:
             try:
                 page = create_new_page(form, page_type)
@@ -231,8 +241,8 @@ def edit_page(slug):
     if form.validate_on_submit():
         if page_type == "recap" and form.session_number.data is None:
             form.session_number.errors.append("Recaps require a session number!")
-        elif page_title_exists(form.title.data, exclude_page_id=page.id):
-            form.title.errors.append("A page with that title already exists.")
+        elif not validate_page_title(form, exclude_page_id=page.id):
+            pass
         else:
             try:
                 update_page(page, form, page_type)
@@ -272,6 +282,12 @@ def delete_page(slug):
         abort(400)
 
     title = page.title
+
+    reserve_page_title(page, page.title)
+    models.PageTitleAliases.query.filter_by(page_id=page.id).update(
+        {models.PageTitleAliases.page_id: None},
+        synchronize_session=False,
+    )
 
     models.PageLinks.query.filter_by(source_page_id=page.id).delete(
         synchronize_session=False
@@ -355,14 +371,29 @@ def clear_unused_session_number(form, page_type):
         form.session_number.raw_data = None
 
 
-def page_title_exists(title, exclude_page_id=None):
+def validate_page_title(form, exclude_page_id=None):
+    title = form.title.data.strip()
     query = models.Pages.query.filter_by(title=title.strip())
     if exclude_page_id is not None:
         query = query.filter(models.Pages.id != exclude_page_id)
-    return query.first() is not None
+    if query.first() is not None:
+        form.title.errors.append("A page with that title already exists.")
+        return False
+
+    historical_title = models.PageTitleAliases.query.filter_by(title=title).first()
+    if historical_title is not None:
+        form.title.errors.append(HISTORICAL_TITLE_ERROR)
+        return False
+
+    return True
 
 
 def add_integrity_error(form):
+    title = (form.title.data or "").strip()
+    if title and models.PageTitleAliases.query.filter_by(title=title).first():
+        form.title.errors.append(HISTORICAL_TITLE_ERROR)
+        return
+
     form.title.errors.append(
         "That page or category already exists. Please choose another name."
     )
@@ -391,22 +422,51 @@ def slugify(value):
 
 
 def extract_wiki_link_titles(body_markdown):
-    return {
-        match.group(1).strip()
-        for match in WIKI_LINK_PATTERN.finditer(body_markdown)
-        if match.group(1).strip()
-    }
+    titles = []
+    seen_titles = set()
+
+    for match in WIKI_LINK_PATTERN.finditer(body_markdown):
+        title = match.group(1).strip()
+        if title and title not in seen_titles:
+            titles.append(title)
+            seen_titles.add(title)
+
+    return titles
+
+
+def resolve_wiki_link_targets(target_titles):
+    targets_by_title = {}
+    unresolved_titles = set(target_titles)
+
+    if unresolved_titles:
+        current_pages = models.Pages.query.filter(
+            models.Pages.title.in_(unresolved_titles)
+        ).all()
+        for page in current_pages:
+            targets_by_title[page.title] = page
+            unresolved_titles.discard(page.title)
+
+    if unresolved_titles:
+        aliases = models.PageTitleAliases.query.filter(
+            models.PageTitleAliases.title.in_(unresolved_titles)
+        ).all()
+        page_ids = {alias.page_id for alias in aliases if alias.page_id is not None}
+        pages_by_id = {}
+        if page_ids:
+            pages_by_id = {
+                page.id: page
+                for page in models.Pages.query.filter(models.Pages.id.in_(page_ids))
+            }
+
+        for alias in aliases:
+            targets_by_title[alias.title] = pages_by_id.get(alias.page_id)
+
+    return targets_by_title
 
 
 def render_wiki_markdown(body_markdown):
     target_titles = extract_wiki_link_titles(body_markdown)
-    pages_by_title = {}
-
-    if target_titles:
-        target_pages = models.Pages.query.filter(
-            models.Pages.title.in_(target_titles)
-        ).all()
-        pages_by_title = {page.title: page for page in target_pages}
+    pages_by_title = resolve_wiki_link_targets(target_titles)
 
     def replace_wiki_link(match):
         target_title = match.group(1).strip()
@@ -419,7 +479,7 @@ def render_wiki_markdown(body_markdown):
             href = url_for("pages.create_page", title=target_title)
         else:
             link_class = "wiki-hyperlink"
-            href = url_for("pages.view_page", slug=target_page.slug)
+            href = url_for("pages.view_page_by_id", page_id=target_page.id)
 
         return (
             f'<a class="{link_class}" href="{escape(href, quote=True)}">'
@@ -432,20 +492,20 @@ def render_wiki_markdown(body_markdown):
 
 def refresh_page_links(page, body_markdown):
     target_titles = extract_wiki_link_titles(body_markdown)
-    pages_by_title = {}
-
-    if target_titles:
-        target_pages = models.Pages.query.filter(
-            models.Pages.title.in_(target_titles)
-        ).all()
-        pages_by_title = {target.title: target for target in target_pages}
+    pages_by_title = resolve_wiki_link_targets(target_titles)
 
     models.PageLinks.query.filter_by(source_page_id=page.id).delete(
         synchronize_session=False
     )
 
-    for target_title in sorted(target_titles):
+    linked_page_ids = set()
+    for target_title in target_titles:
         target_page = pages_by_title.get(target_title)
+        if target_page is not None:
+            if target_page.id in linked_page_ids:
+                continue
+            linked_page_ids.add(target_page.id)
+
         db.session.add(
             models.PageLinks(
                 source_page_id=page.id,
@@ -455,17 +515,45 @@ def refresh_page_links(page, body_markdown):
         )
 
 
-def resolve_incoming_page_links(page, old_title=None):
-    if old_title is not None and old_title != page.title:
-        models.PageLinks.query.filter_by(target_page_id=page.id).update(
-            {models.PageLinks.target_page_id: None},
-            synchronize_session=False,
-        )
-
-    models.PageLinks.query.filter_by(target_title=page.title).update(
-        {models.PageLinks.target_page_id: page.id},
-        synchronize_session=False,
+def resolve_incoming_page_links(page):
+    recognized_titles = [page.title]
+    recognized_titles.extend(
+        alias.title
+        for alias in models.PageTitleAliases.query.filter_by(page_id=page.id)
     )
+
+    existing_links = models.PageLinks.query.filter_by(
+        target_page_id=page.id
+    ).order_by(models.PageLinks.id).all()
+    kept_link_by_source = {}
+    for link in existing_links:
+        if link.source_page_id in kept_link_by_source:
+            db.session.delete(link)
+        else:
+            kept_link_by_source[link.source_page_id] = link
+
+    candidate_links = models.PageLinks.query.filter(
+        models.PageLinks.target_title.in_(recognized_titles)
+    ).order_by(models.PageLinks.id).all()
+    for link in candidate_links:
+        kept_link = kept_link_by_source.get(link.source_page_id)
+        if kept_link is not None and kept_link.id != link.id:
+            db.session.delete(link)
+        else:
+            link.target_page_id = page.id
+            kept_link_by_source[link.source_page_id] = link
+
+
+def reserve_page_title(page, title):
+    existing_alias = models.PageTitleAliases.query.filter_by(title=title).first()
+    if existing_alias is None:
+        db.session.add(
+            models.PageTitleAliases(
+                page_id=page.id,
+                title=title,
+            )
+        )
+        db.session.flush()
 
 
 def get_available_slug(title, model, exclude_id=None):
@@ -579,5 +667,7 @@ def update_page(page, form, page_type):
     db.session.flush()
     page.current_revision_id = revision.id
     set_page_categories(page, form)
+    if old_title != page.title:
+        reserve_page_title(page, old_title)
     refresh_page_links(page, revision.body_markdown)
-    resolve_incoming_page_links(page, old_title=old_title)
+    resolve_incoming_page_links(page)

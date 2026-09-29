@@ -135,6 +135,29 @@ class Pages(db.Model):
     )
 
 
+class PageTitleAliases(db.Model):
+    __tablename__ = "page_title_aliases"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    page_id: Mapped[int] = mapped_column(
+        db.ForeignKey("pages.id"),
+        nullable=True
+    )
+
+    title: Mapped[str] = mapped_column(
+        String(200),
+        unique=True,
+        nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc)
+    )
+
+
 class PageCategories(db.Model):
     __tablename__ = "page_categories"
 
@@ -211,4 +234,5 @@ class PageLinks(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint('source_page_id', 'target_title', name='unique_page_link'),
+        db.UniqueConstraint('source_page_id', 'target_page_id', name='unique_page_target'),
     )
