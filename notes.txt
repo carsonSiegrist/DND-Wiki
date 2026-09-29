@@ -26,9 +26,11 @@ Pages should be created under a category; editable by anyone. Edit history also 
 
 So the plan is: 
 
-Users/auth
-Pages + revisions
-Markdown rendering
+[x]Users/auth
+[x]Pages + revisions
+[x]Markdown rendering
+Page creation (partway done - WIP, all but frontend I think. Idk, I made some progress, nothing tested.)
+Page editing 
 Page browsing/search
 Categories
 Wiki links

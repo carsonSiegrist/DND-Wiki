@@ -26,10 +26,10 @@
         <a href="{{ url_for('auth.logout') }}">Log Out.</a>
         {% endif %}
         {% for page in pages %}
-            <li><a href="/page/{{ page.slug }}">{{ page.title }}</a></li>
+            <li><a href="{{ url_for('pages.view_page', slug=page.slug) }}">{{ page.title }}</a></li>
         {% endfor %}
 
-        <li><a href="/auth/register">register</a></li>
+        <li><a href="{{ url_for('auth.register')}}">register</a></li>
         <li><a href="{{ url_for('auth.login') }}">log in</a></li>
 
         {% if not pages %}
