@@ -1,25 +1,85 @@
-<!DOCTYPE html> 
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>D&D Wiki - {{ page.title }}</title>
-</head>
-<body>
-    {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-            <ul class="flashes">
-                {% for category, message in messages %}
-                    <li class="{{ category }}">{{ message }}</li>
-                {% endfor %}
-            </ul>
-        {% endif %}
-    {% endwith %}
+{% extends "base.html" %}
 
-    {{rendered_body | safe}}
+{% block title %}D&amp;D Wiki - {{ page.title }}{% endblock %}
+{% block header_class %}title{% endblock %}
+{% block header %}{{ page.title }}{% endblock %}
+
+{% block content %}
+    {% if is_old_revision %}
+        <p>
+            Viewing version {{ revision.revision_number }}.
+            This is not the current version.
+        </p>
+    {% endif %}
+
+    {{ rendered_body | safe }}
+
+    {% if is_old_revision %}
+        {% if can_edit %}
+            <form method="POST" action="{{ url_for('pages.restore_revision', slug=page.slug, revision_number=revision.revision_number) }}">
+                {{ restore_form.hidden_tag() }}
+                {{ restore_form.submit() }}
+            </form>
+        {% endif %}
+    {% else %}
+        {% if can_edit %}
+            <p><a href="{{ url_for('pages.edit_page', slug=page.slug) }}">Edit Page</a></p>
+        {% endif %}
+    {% endif %}
+
+    <form method="GET" action="{{ url_for('pages.page_versions', slug=page.slug) }}">
+        <button type="submit">View Page History</button>
+    </form>
+
+    {% if can_delete and not is_old_revision %}
+        <button type="button" id="show-delete-confirmation">Delete Page</button>
+        <dialog id="delete-confirmation">
+            <p>
+                Are you sure you want to permanently delete
+                <strong>{{ page.title }}</strong>?
+            </p>
+            <p>This action cannot be undone.</p>
+            <form method="POST" action="{{ url_for('pages.delete_page', slug=page.slug) }}">
+                {{ delete_form.hidden_tag() }}
+                {{ delete_form.submit() }}
+                <button type="button" id="cancel-delete">Cancel</button>
+            </form>
+        </dialog>
+    {% elif can_delete and is_old_revision %}
+        <button type="button" id="show-delete-confirmation">Delete Revision</button>
+        <dialog id="delete-confirmation">
+            <p>
+                Are you sure you want to permanently delete version
+                <strong>{{ revision.revision_number }}</strong> of
+                <strong>{{ page.title }}</strong>?
+            </p>
+            <p>This action cannot be undone.</p>
+            <form method="POST" action="{{ url_for('pages.delete_revision', slug=page.slug, revision_number=revision.revision_number) }}">
+                {{ delete_revision_form.hidden_tag() }}
+                {{ delete_revision_form.submit() }}
+                <button type="button" id="cancel-delete">Cancel</button>
+            </form>
+        </dialog>
+    {% endif %}
+{% endblock %}
+
+{% block scripts %}
     {% if clear_page_draft %}
         <script>
-            localStorage.removeItem("wiki-page-draft-{{ current_user.id }}");
+            localStorage.removeItem({{ draft_key | tojson }});
         </script>
     {% endif %}
-</body>
-</html>
+    {% if can_delete %}
+        <script>
+            const deleteDialog = document.getElementById("delete-confirmation");
+            document.getElementById("show-delete-confirmation").addEventListener(
+                "click",
+                () => deleteDialog.showModal(),
+            );
+            document.getElementById("cancel-delete").addEventListener(
+                "click",
+                () => deleteDialog.close(),
+            );
+        </script>
+    {% endif %}
+{% endblock %}

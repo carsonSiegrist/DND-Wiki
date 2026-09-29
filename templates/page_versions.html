@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block title %}D&amp;D Wiki - {{ page.title }} History{% endblock %}
+{% block header_class %}title{% endblock %}
+{% block header %}{{ page.title }} History{% endblock %}
+
+{% block content %}
+    <ul>
+        {% for revision, author in revision_rows %}
+            <li>
+                {% if revision.id == page.current_revision_id %}
+                    <a href="{{ url_for('pages.view_page', slug=page.slug) }}">
+                        Version {{ revision.revision_number }}
+                    </a>
+                    <strong>(current)</strong>
+                {% else %}
+                    <a href="{{ url_for('pages.view_revision', slug=page.slug, revision_number=revision.revision_number) }}">
+                        Version {{ revision.revision_number }}
+                    </a>
+                {% endif %}
+                - {{ revision.edit_summary or "No edit summary" }}
+                - {{ revision.created_at.strftime("%Y-%m-%d %H:%M:%S") }} UTC
+                - {{ author.username }}
+            </li>
+        {% endfor %}
+    </ul>
+
+    <p><a href="{{ url_for('pages.view_page', slug=page.slug) }}">Back to current page</a></p>
+{% endblock %}

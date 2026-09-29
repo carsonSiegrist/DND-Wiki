@@ -1,12 +1,9 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>D&amp;D Wiki - Create Page</title>
-</head>
-<body>
-    <h1>Create a Wiki Page</h1>
+{% extends "base.html" %}
 
+{% block title %}D&amp;D Wiki - {{ form_title }}{% endblock %}
+{% block header %}{{ form_title }}{% endblock %}
+
+{% block content %}
     <form method="POST" id="create-page-form">
         {{ form.hidden_tag() }}
 
@@ -18,10 +15,20 @@
             {% endfor %}
         </p>
 
-        <p>
-            {{ form.is_recap() }}
-            {{ form.is_recap.label }}
-        </p>
+        {% if current_user.role == "admin" %}
+            <p>
+                {{ form.page_type.label }}<br>
+                {{ form.page_type() }}
+                {% for error in form.page_type.errors %}
+                    <br><span class="error">{{ error }}</span>
+                {% endfor %}
+            </p>
+        {% else %}
+            <p>
+                {{ form.is_recap() }}
+                {{ form.is_recap.label }}
+            </p>
+        {% endif %}
 
         <div id="session-number-fields" hidden>
             <p>
@@ -41,19 +48,22 @@
             {% endfor %}
         </p>
 
-        <p>
-            <button type="button" id="show-new-category">New Category</button>
-        </p>
-
-        <div id="new-category-fields" hidden>
-            <p>
-                {{ form.new_category.label }}<br>
-                {{ form.new_category(size=30) }}
-                {% for error in form.new_category.errors %}
-                    <br><span class="error">{{ error }}</span>
-                {% endfor %}
-            </p>
+        <div id="new-category-fields" data-next-index="{{ form.new_categories | length }}">
+            {% for category_field in form.new_categories %}
+                <p class="new-category-field">
+                    {{ category_field.label }}<br>
+                    {{ category_field(size=30) }}
+                    <button type="button" class="remove-category">Remove</button>
+                    {% for error in category_field.errors %}
+                        <br><span class="error">{{ error }}</span>
+                    {% endfor %}
+                </p>
+            {% endfor %}
         </div>
+
+        <p>
+            <button type="button" id="add-new-category">New Category</button>
+        </p>
 
         <p>
             {{ form.body_markdown.label }}<br>
@@ -63,24 +73,79 @@
             {% endfor %}
         </p>
 
+        {% if editing %}
+            <p>
+                {{ form.edit_summary.label }}<br>
+                {{ form.edit_summary(size=60) }}
+                {% for error in form.edit_summary.errors %}
+                    <br><span class="error">{{ error }}</span>
+                {% endfor %}
+            </p>
+        {% endif %}
+
         {{ form.submit() }}
     </form>
+{% endblock %}
 
+{% block scripts %}
     <script>
         const form = document.getElementById("create-page-form");
         const recapCheckbox = document.getElementById("is_recap");
+        const pageTypeField = document.getElementById("page_type");
+        const editSummaryField = document.getElementById("edit_summary");
         const sessionFields = document.getElementById("session-number-fields");
-        const newCategoryButton = document.getElementById("show-new-category");
+        const newCategoryButton = document.getElementById("add-new-category");
         const newCategoryFields = document.getElementById("new-category-fields");
-        const newCategoryInput = document.getElementById("new_category");
-        const draftKey = "wiki-page-draft-{{ current_user.id }}";
+        const draftKey = {{ draft_key | tojson }};
+        const preservePrefilledTitle = {{ prefilled_title | tojson }};
+        let nextCategoryIndex = Number(newCategoryFields.dataset.nextIndex);
 
         function updateRecapFields() {
-            sessionFields.hidden = !recapCheckbox.checked;
+            const isRecap = pageTypeField
+                ? pageTypeField.value === "recap"
+                : recapCheckbox.checked;
+            sessionFields.hidden = !isRecap;
         }
 
-        function showNewCategoryFields() {
-            newCategoryFields.hidden = false;
+        function addNewCategory(value = "") {
+            const fieldId = `new_categories-${nextCategoryIndex}`;
+            const row = document.createElement("p");
+            row.className = "new-category-field";
+
+            const label = document.createElement("label");
+            label.htmlFor = fieldId;
+            label.textContent = "New Category";
+
+            const input = document.createElement("input");
+            input.id = fieldId;
+            input.name = fieldId;
+            input.type = "text";
+            input.size = 30;
+            input.maxLength = 100;
+            input.value = value;
+
+            const removeButton = document.createElement("button");
+            removeButton.type = "button";
+            removeButton.className = "remove-category";
+            removeButton.textContent = "Remove";
+
+            row.append(label, document.createElement("br"), input, " ", removeButton);
+            newCategoryFields.append(row);
+            nextCategoryIndex += 1;
+
+            return input;
+        }
+
+        function getNewCategoryValues() {
+            return Array.from(
+                newCategoryFields.querySelectorAll('input[name^="new_categories-"]')
+            ).map(input => input.value);
+        }
+
+        function replaceNewCategories(values) {
+            newCategoryFields.replaceChildren();
+            nextCategoryIndex = 0;
+            values.forEach(value => addNewCategory(value));
         }
 
         function saveDraft() {
@@ -88,11 +153,13 @@
                 .map(option => option.value);
             const draft = {
                 title: form.title.value,
-                isRecap: recapCheckbox.checked,
+                isRecap: recapCheckbox ? recapCheckbox.checked : false,
+                pageType: pageTypeField ? pageTypeField.value : null,
                 sessionNumber: form.session_number.value,
                 categories: selectedCategories,
-                newCategory: newCategoryInput.value,
+                newCategories: getNewCategoryValues(),
                 bodyMarkdown: form.body_markdown.value,
+                editSummary: editSummaryField ? editSummaryField.value : null,
             };
             localStorage.setItem(draftKey, JSON.stringify(draft));
         }
@@ -105,19 +172,29 @@
 
             try {
                 const draft = JSON.parse(savedDraft);
-                form.title.value = draft.title || "";
-                recapCheckbox.checked = Boolean(draft.isRecap);
+                if (!preservePrefilledTitle) {
+                    form.title.value = draft.title || "";
+                }
+                if (recapCheckbox) {
+                    recapCheckbox.checked = Boolean(draft.isRecap);
+                }
+                if (pageTypeField && draft.pageType) {
+                    pageTypeField.value = draft.pageType;
+                }
                 form.session_number.value = draft.sessionNumber || form.session_number.value;
                 form.body_markdown.value = draft.bodyMarkdown || "";
-                newCategoryInput.value = draft.newCategory || "";
+                if (editSummaryField) {
+                    editSummaryField.value = draft.editSummary || "";
+                }
 
                 const selectedCategories = new Set(draft.categories || []);
                 Array.from(form.categories.options).forEach(option => {
                     option.selected = selectedCategories.has(option.value);
                 });
 
-                if (newCategoryInput.value) {
-                    showNewCategoryFields();
+                const legacyCategory = draft.newCategory ? [draft.newCategory] : [];
+                if (getNewCategoryValues().length === 0) {
+                    replaceNewCategories(draft.newCategories || legacyCategory);
                 }
             } catch (error) {
                 localStorage.removeItem(draftKey);
@@ -126,18 +203,24 @@
 
         restoreDraft();
         updateRecapFields();
-        if (newCategoryInput.value) {
-            showNewCategoryFields();
-        }
 
-        recapCheckbox.addEventListener("change", updateRecapFields);
+        if (recapCheckbox) {
+            recapCheckbox.addEventListener("change", updateRecapFields);
+        }
+        if (pageTypeField) {
+            pageTypeField.addEventListener("change", updateRecapFields);
+        }
         newCategoryButton.addEventListener("click", () => {
-            showNewCategoryFields();
-            newCategoryInput.focus();
+            addNewCategory().focus();
+        });
+        newCategoryFields.addEventListener("click", event => {
+            if (event.target.classList.contains("remove-category")) {
+                event.target.closest(".new-category-field").remove();
+                saveDraft();
+            }
         });
         form.addEventListener("input", saveDraft);
         form.addEventListener("change", saveDraft);
         form.addEventListener("submit", saveDraft);
     </script>
-</body>
-</html>
+{% endblock %}

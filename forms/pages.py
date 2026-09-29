@@ -1,12 +1,14 @@
 #For wiki page CRUD.
 from flask_wtf import FlaskForm
 from wtforms import (
-    StringField,
     BooleanField,
+    FieldList,
     IntegerField,
+    SelectField,
     SelectMultipleField,
-    TextAreaField,
+    StringField,
     SubmitField,
+    TextAreaField,
 )
 from wtforms.validators import DataRequired, Length, Optional, NumberRange
 
@@ -18,6 +20,17 @@ class PageCreateForm(FlaskForm):
     )
 
     is_recap = BooleanField("Session recap")
+
+    page_type = SelectField(
+        "Page Type",
+        choices=[
+            ("article", "Article"),
+            ("recap", "Recap"),
+            ("official", "Official"),
+        ],
+        validators=[DataRequired()],
+        default="article",
+    )
 
     session_number = IntegerField(
         "Session Number",
@@ -33,9 +46,12 @@ class PageCreateForm(FlaskForm):
         validators=[Optional()],
     )
 
-    new_category = StringField(
-        "New Category",
-        validators=[Optional(), Length(max=100)],
+    new_categories = FieldList(
+        StringField(
+            "New Category",
+            validators=[Optional(), Length(max=100)],
+        ),
+        min_entries=0,
     )
 
     body_markdown = TextAreaField(
@@ -43,4 +59,21 @@ class PageCreateForm(FlaskForm):
         validators=[DataRequired()],
     )
 
+    edit_summary = StringField(
+        "Edit Summary",
+        validators=[Optional(), Length(max=512)],
+    )
+
     submit = SubmitField("Create Page")
+
+
+class DeletePageForm(FlaskForm):
+    submit = SubmitField("Permanently Delete Page")
+
+
+class RestoreRevisionForm(FlaskForm):
+    submit = SubmitField("Restore Version")
+
+
+class DeleteRevisionForm(FlaskForm):
+    submit = SubmitField("Permanently Delete Revision")
