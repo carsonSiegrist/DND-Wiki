@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block title %}Categories - D&amp;D Wiki{% endblock %}
+{% block header %}Categories{% endblock %}
+
+{% block content %}
+    <table>
+        <thead>
+            <tr>
+                <th scope="col">Category Name</th>
+                <th scope="col">Number of Articles</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for category, article_count in category_rows %}
+                <tr>
+                    <td><a href="{{ url_for('main.view_category', slug=category.slug) }}">{{ category.name }}</a></td>
+                    <td>{{ article_count }}</td>
+                </tr>
+            {% else %}
+                <tr>
+                    <td colspan="2">No categories found.</td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+{% endblock %}

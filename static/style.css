@@ -1,3 +1,25 @@
+.site-navigation {
+    display: flex;
+}
+
+.primary-navigation,
+.user-navigation {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.user-navigation {
+    margin-left: auto;
+}
+
+.category-list {
+    display: block;
+    max-width: 40vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .notifications {
     list-style: none;
     padding: 0;

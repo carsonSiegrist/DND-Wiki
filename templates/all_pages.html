@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% from "_category_links.html" import category_links %}
+
+{% block title %}All Pages - D&amp;D Wiki{% endblock %}
+{% block header %}All Pages{% endblock %}
+
+{% block content %}
+    <section>
+        <h2>Recaps</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th scope="col">Recap Number</th>
+                    <th scope="col">Title</th>
+                    <th scope="col">Categories</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for page, categories in recap_rows %}
+                    <tr>
+                        <td>{{ page.session_number }}</td>
+                        <td><a href="{{ url_for('pages.view_page', slug=page.slug) }}">{{ page.title }}</a></td>
+                        <td>{{ category_links(categories) }}</td>
+                    </tr>
+                {% else %}
+                    <tr>
+                        <td colspan="3">No recaps found.</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
+
+    <section>
+        <h2>Articles</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th scope="col">Title</th>
+                    <th scope="col">Categories</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for page, categories in article_rows %}
+                    <tr>
+                        <td><a href="{{ url_for('pages.view_page', slug=page.slug) }}">{{ page.title }}</a></td>
+                        <td>{{ category_links(categories) }}</td>
+                    </tr>
+                {% else %}
+                    <tr>
+                        <td colspan="2">No articles found.</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
+{% endblock %}

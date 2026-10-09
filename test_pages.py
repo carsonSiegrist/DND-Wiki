@@ -765,6 +765,9 @@ class PageCreationTestCase(unittest.TestCase):
         authenticated_response = self.client.get("/pages/new")
 
         self.assertIn(b'href="/">Home</a>', authenticated_response.data)
+        self.assertIn(b'href="/pages">All Pages</a>', authenticated_response.data)
+        self.assertIn(b'href="/categories">Categories</a>', authenticated_response.data)
+        self.assertIn(b'class="user-navigation"', authenticated_response.data)
         self.assertIn(b"page-author", authenticated_response.data)
         self.assertIn(b'href="/static/style.css"', authenticated_response.data)
 
@@ -772,7 +775,7 @@ class PageCreationTestCase(unittest.TestCase):
             session.clear()
 
         for path, heading in (
-            ("/", b"Welcome to the D&amp;D Wiki!"),
+            ("/", b"Welcome to the Wiki"),
             ("/auth/login", b"Log In"),
             ("/auth/register", b"Create Account"),
         ):
@@ -780,9 +783,91 @@ class PageCreationTestCase(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertIn(heading, response.data)
             self.assertIn(b'href="/">Home</a>', response.data)
+            self.assertIn(b'href="/pages">All Pages</a>', response.data)
+            self.assertIn(b'href="/categories">Categories</a>', response.data)
             self.assertIn(b'href="/auth/login">Log In</a>', response.data)
             self.assertIn(b'href="/auth/register">Register</a>', response.data)
             self.assertIn(b'href="/static/style.css"', response.data)
+
+    def test_all_pages_and_category_indexes(self):
+        article_response = self.client.post(
+            "/pages/new",
+            data={
+                "title": "Zulu Article",
+                "categories": [str(self.category_id)],
+                "new_categories-0": "Zebra",
+                "new_categories-1": "Alpha",
+                "body_markdown": "Article body",
+            },
+        )
+        self.assertEqual(article_response.status_code, 302)
+
+        earlier_article_response = self.client.post(
+            "/pages/new",
+            data={
+                "title": "Able Article",
+                "body_markdown": "Earlier alphabetical article",
+            },
+        )
+        self.assertEqual(earlier_article_response.status_code, 302)
+
+        recap_response = self.client.post(
+            "/pages/new",
+            data={
+                "title": "A Later Recap",
+                "is_recap": "y",
+                "session_number": "5",
+                "categories": [str(self.category_id)],
+                "body_markdown": "Recap body",
+            },
+        )
+        self.assertEqual(recap_response.status_code, 302)
+
+        all_pages_response = self.client.get("/pages")
+        self.assertEqual(all_pages_response.status_code, 200)
+        self.assertIn(b"Recap Number", all_pages_response.data)
+        self.assertIn(b"Articles", all_pages_response.data)
+        self.assertLess(
+            all_pages_response.data.index(b"An Earlier Adventure"),
+            all_pages_response.data.index(b"A Later Recap"),
+        )
+        self.assertLess(
+            all_pages_response.data.index(b"Able Article"),
+            all_pages_response.data.index(b"Zulu Article"),
+        )
+        self.assertIn(b'class="category-list"', all_pages_response.data)
+
+        categories_response = self.client.get("/categories")
+        self.assertEqual(categories_response.status_code, 200)
+        self.assertLess(
+            categories_response.data.index(b">Alpha</a>"),
+            categories_response.data.index(b">Locations</a>"),
+        )
+        self.assertLess(
+            categories_response.data.index(b">Locations</a>"),
+            categories_response.data.index(b">Zebra</a>"),
+        )
+        self.assertIn(b'<a href="/categories/locations">Locations</a>', categories_response.data)
+        self.assertIn(b"<td>2</td>", categories_response.data)
+
+        category_response = self.client.get("/categories/locations")
+        self.assertEqual(category_response.status_code, 200)
+        self.assertLess(
+            category_response.data.index(b"A Later Recap"),
+            category_response.data.index(b"Zulu Article"),
+        )
+        self.assertIn(
+            b'<strong><a href="/categories/locations">Locations</a></strong>',
+            category_response.data,
+        )
+        self.assertLess(
+            category_response.data.index(b">Locations</a>"),
+            category_response.data.index(b">Alpha</a>"),
+        )
+        self.assertLess(
+            category_response.data.index(b">Alpha</a>"),
+            category_response.data.index(b">Zebra</a>"),
+        )
 
 
 if __name__ == "__main__":

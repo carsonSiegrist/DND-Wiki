@@ -1,17 +1,7 @@
 {% extends "base.html" %}
 
-{% block header %}Welcome to the D&amp;D Wiki!{% endblock %}
+{% block header %}Welcome to the Wiki{% endblock %}
 
 {% block content %}
-    {% if current_user.is_authenticated %}
-        <p><a href="{{ url_for('pages.create_page') }}">Create Page</a></p>
-    {% endif %}
-
-    <ul>
-        {% for page in pages %}
-            <li><a href="{{ url_for('pages.view_page', slug=page.slug) }}">{{ page.title }}</a></li>
-        {% else %}
-            <li>No pages found.</li>
-        {% endfor %}
-    </ul>
+    <p>Welcome to the wiki.</p>
 {% endblock %}

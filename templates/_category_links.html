@@ -1,0 +1,12 @@
+{% macro category_links(categories, current_category=None) -%}
+    <span class="category-list">
+        {% if current_category %}
+            <strong><a href="{{ url_for('main.view_category', slug=current_category.slug) }}">{{ current_category.name }}</a></strong>{% if categories %}, {% endif %}
+        {% endif %}
+        {% for category in categories %}
+            <a href="{{ url_for('main.view_category', slug=category.slug) }}">{{ category.name }}</a>{% if not loop.last %}, {% endif %}
+        {% else %}
+            {% if not current_category %}<span>—</span>{% endif %}
+        {% endfor %}
+    </span>
+{%- endmacro %}
