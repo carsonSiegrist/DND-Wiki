@@ -49,8 +49,8 @@ users
 - username            NOT NULL, UNIQUE
 - email               NOT NULL, UNIQUE
 - password_hash       NOT NULL
-- role                NOT NULL
-- created_at          NOT NULL
+- role                NOT NULL, defaults to "user" (supported values: "user", "admin")
+- created_at          NOT NULL, defaults to current UTC time
 
 categories
 - id                  PRIMARY KEY
@@ -58,18 +58,32 @@ categories
 - slug                NOT NULL, UNIQUE
 - description         nullable
 - created_by          NOT NULL, FK -> users.id
-- created_at          NOT NULL
+- created_at          NOT NULL, defaults to current UTC time
 
 pages
 - id                  PRIMARY KEY
-- title               NOT NULL
+- title               NOT NULL, UNIQUE
 - slug                NOT NULL, UNIQUE
-- page_type           NOT NULL
+- page_type           NOT NULL (supported values: "article", "recap", "official")
 - created_by          NOT NULL, FK -> users.id
-- created_at          NOT NULL
-- updated_at          NOT NULL
+- created_at          NOT NULL, defaults to current UTC time
+- updated_at          nullable, defaults to current UTC time and changes on update
 - session_number      nullable
 - current_revision_id nullable, FK -> page_revisions.id
+
+page_title_aliases
+- id                  PRIMARY KEY
+- page_id             nullable, FK -> pages.id
+- title               NOT NULL, UNIQUE
+- created_at          NOT NULL, defaults to current UTC time
+
+Historical titles remain reserved. page_id becomes null when the page is
+permanently deleted, leaving a tombstone so old wiki links cannot silently
+resolve to an unrelated future page.
+
+page_update_authors
+- page_id             PRIMARY KEY, FK -> pages.id
+- user_id             NOT NULL, FK -> users.id
 
 page_categories
 - page_id             NOT NULL, FK -> pages.id
@@ -82,11 +96,15 @@ page_revisions
 - page_id             NOT NULL, FK -> pages.id
 - author_id           NOT NULL, FK -> users.id
 - body_markdown       NOT NULL
-- created_at          NOT NULL
+- created_at          NOT NULL, defaults to current UTC time
 - edit_summary        nullable
 - revision_number     NOT NULL
 
 UNIQUE (page_id, revision_number)
+
+page_revision_titles
+- revision_id         PRIMARY KEY, FK -> page_revisions.id
+- title               NOT NULL
 
 page_links
 - id                  PRIMARY KEY
@@ -95,3 +113,4 @@ page_links
 - target_title        NOT NULL
 
 UNIQUE (source_page_id, target_title)
+UNIQUE (source_page_id, target_page_id)

@@ -40,13 +40,25 @@
             </p>
         </div>
 
-        <p>
-            {{ form.categories.label }}<br>
-            {{ form.categories(size=5) }}
+        <fieldset>
+            <legend>{{ form.categories.label.text }}</legend>
+            {% for value, label in form.categories.choices %}
+                <label>
+                    <input
+                        type="checkbox"
+                        name="categories"
+                        value="{{ value }}"
+                        {% if value in (form.categories.data or []) %}checked{% endif %}
+                    >
+                    {{ label }}
+                </label><br>
+            {% else %}
+                <span>No categories have been created yet.</span>
+            {% endfor %}
             {% for error in form.categories.errors %}
                 <br><span class="error">{{ error }}</span>
             {% endfor %}
-        </p>
+        </fieldset>
 
         <div id="new-category-fields" data-next-index="{{ form.new_categories | length }}">
             {% for category_field in form.new_categories %}
@@ -149,8 +161,12 @@
         }
 
         function saveDraft() {
-            const selectedCategories = Array.from(form.categories.selectedOptions)
-                .map(option => option.value);
+            const categoryFields = Array.from(
+                form.querySelectorAll('input[name="categories"]')
+            );
+            const selectedCategories = categoryFields
+                .filter(field => field.checked)
+                .map(field => field.value);
             const draft = {
                 title: form.title.value,
                 isRecap: recapCheckbox ? recapCheckbox.checked : false,
@@ -188,8 +204,8 @@
                 }
 
                 const selectedCategories = new Set(draft.categories || []);
-                Array.from(form.categories.options).forEach(option => {
-                    option.selected = selectedCategories.has(option.value);
+                form.querySelectorAll('input[name="categories"]').forEach(field => {
+                    field.checked = selectedCategories.has(field.value);
                 });
 
                 const legacyCategory = draft.newCategory ? [draft.newCategory] : [];

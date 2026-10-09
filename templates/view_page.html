@@ -1,8 +1,38 @@
 {% extends "base.html" %}
 
-{% block title %}D&amp;D Wiki - {{ page.title }}{% endblock %}
+{% block title %}D&amp;D Wiki - {{ display_title }}{% endblock %}
 {% block header_class %}title{% endblock %}
-{% block header %}{{ page.title }}{% endblock %}
+{% block header %}{{ display_title }}{% endblock %}
+
+{% block header_details %}
+    <dl class="page-metadata">
+        <dt>Original Author</dt>
+        <dd>{{ page_metadata.original_author.username }}</dd>
+
+        <dt>Original Creation Date</dt>
+        <dd>{{ page_metadata.created_at.strftime("%Y-%m-%d %H:%M:%S") }} UTC</dd>
+
+        <dt>Last Updated Author</dt>
+        <dd>{{ page_metadata.updated_author.username }}</dd>
+
+        <dt>Last Updated Date</dt>
+        <dd>{{ page_metadata.updated_at.strftime("%Y-%m-%d %H:%M:%S") }} UTC</dd>
+
+        <dt>Categories</dt>
+        <dd>
+            {% for category in page_metadata.categories %}
+                <a href="/categories/{{ category.slug }}">{{ category.name }}</a>{% if not loop.last %}, {% endif %}
+            {% else %}
+                None
+            {% endfor %}
+        </dd>
+
+        {% if page.page_type == "recap" %}
+            <dt>Recap Number</dt>
+            <dd>{{ page.session_number }}</dd>
+        {% endif %}
+    </dl>
+{% endblock %}
 
 {% block content %}
     {% if is_old_revision %}

@@ -137,6 +137,38 @@ class PageCreationTestCase(unittest.TestCase):
         self.assertIn(b"View Page History", view_response.data)
         self.assertIn(b"localStorage.removeItem", view_response.data)
         self.assertIn(b'href="/static/style.css"', view_response.data)
+        self.assertIn(b"Original Author", view_response.data)
+        self.assertIn(b"Original Creation Date", view_response.data)
+        self.assertIn(b"Last Updated Author", view_response.data)
+        self.assertIn(b"Last Updated Date", view_response.data)
+        self.assertIn(b"page-author", view_response.data)
+        self.assertIn(b"Recap Number", view_response.data)
+        self.assertIn(b"<dd>4</dd>", view_response.data)
+        self.assertIn(b'href="/categories/discoveries"', view_response.data)
+        self.assertIn(b'href="/categories/factions"', view_response.data)
+        self.assertIn(b'href="/categories/locations"', view_response.data)
+        self.assertLess(
+            view_response.data.index(b">Discoveries</a>"),
+            view_response.data.index(b">Factions</a>"),
+        )
+        self.assertLess(
+            view_response.data.index(b">Factions</a>"),
+            view_response.data.index(b">Locations</a>"),
+        )
+        self.assertIn(b'class="notification-dismiss"', view_response.data)
+        self.assertIn(b"Dismiss notification", view_response.data)
+
+        form_response = self.client.get("/pages/new")
+        self.assertLess(
+            form_response.data.index(b"Discoveries"),
+            form_response.data.index(b"Factions"),
+        )
+        self.assertLess(
+            form_response.data.index(b"Factions"),
+            form_response.data.index(b"Locations"),
+        )
+        self.assertIn(b'type="checkbox"', form_response.data)
+        self.assertNotIn(b'<select id="categories"', form_response.data)
 
     def test_recap_requires_a_session_number(self):
         response = self.client.post(
@@ -174,6 +206,61 @@ class PageCreationTestCase(unittest.TestCase):
             self.assertEqual(page.page_type, "article")
             self.assertIsNone(page.session_number)
 
+    def test_page_can_reclaim_its_own_historical_title_when_edited(self):
+        create_response = self.client.post(
+            "/pages/new",
+            data={
+                "title": "The First Name",
+                "body_markdown": "Original notes",
+            },
+        )
+        self.assertEqual(create_response.status_code, 302)
+
+        rename_response = self.client.post(
+            "/pages/edit/the-first-name",
+            data={
+                "title": "The Second Name",
+                "body_markdown": "Renamed notes",
+                "edit_summary": "Renamed the page",
+            },
+        )
+        self.assertEqual(rename_response.status_code, 302)
+        self.assertIn("/pages/view/the-second-name", rename_response.headers["Location"])
+
+        reclaim_response = self.client.post(
+            "/pages/edit/the-second-name",
+            data={
+                "title": "The First Name",
+                "body_markdown": "Restored-title notes",
+                "edit_summary": "Restored the original title",
+            },
+        )
+        self.assertEqual(reclaim_response.status_code, 302)
+        self.assertIn("/pages/view/the-first-name", reclaim_response.headers["Location"])
+
+        with self.app.app_context():
+            page = models.Pages.query.filter_by(title="The First Name").one()
+            current_revision = db.session.get(
+                models.PageRevisions,
+                page.current_revision_id,
+            )
+
+            self.assertEqual(page.slug, "the-first-name")
+            self.assertEqual(current_revision.revision_number, 3)
+            self.assertEqual(
+                db.session.get(models.PageRevisionTitles, current_revision.id).title,
+                "The First Name",
+            )
+            self.assertIsNone(
+                models.PageTitleAliases.query.filter_by(
+                    title="The First Name"
+                ).first()
+            )
+            second_name_alias = models.PageTitleAliases.query.filter_by(
+                title="The Second Name"
+            ).one()
+            self.assertEqual(second_name_alias.page_id, page.id)
+
     def test_another_user_can_edit_article_and_a_new_revision_is_created(self):
         create_response = self.client.post(
             "/pages/new",
@@ -204,6 +291,10 @@ class PageCreationTestCase(unittest.TestCase):
         self.assertEqual(edit_response.status_code, 302)
         self.assertIn("/pages/view/the-renamed-road", edit_response.headers["Location"])
 
+        updated_view_response = self.client.get("/pages/view/the-renamed-road")
+        self.assertIn(b"Last Updated Author", updated_view_response.data)
+        self.assertIn(b"other-user", updated_view_response.data)
+
         with self.app.app_context():
             page = models.Pages.query.filter_by(title="The Renamed Road").one()
             revisions = models.PageRevisions.query.filter_by(page_id=page.id).order_by(
@@ -229,6 +320,19 @@ class PageCreationTestCase(unittest.TestCase):
             self.assertEqual(revisions[1].author_id, self.other_user_id)
             self.assertEqual(page.current_revision_id, revisions[1].id)
             self.assertEqual(category_names, {"Travel"})
+            self.assertEqual(
+                db.session.get(models.PageUpdateAuthors, page.id).user_id,
+                self.other_user_id,
+            )
+            revision_titles = {
+                revision.id: db.session.get(
+                    models.PageRevisionTitles,
+                    revision.id,
+                ).title
+                for revision in revisions
+            }
+            self.assertEqual(revision_titles[revisions[0].id], "Old Road Name")
+            self.assertEqual(revision_titles[revisions[1].id], "The Renamed Road")
 
         history_response = self.client.get(
             "/pages/view/the-renamed-road/versions"
@@ -239,6 +343,8 @@ class PageCreationTestCase(unittest.TestCase):
         self.assertIn(b"Added current travel discoveries", history_response.data)
         self.assertIn(b"Version 1", history_response.data)
         self.assertIn(b"Initial revision.", history_response.data)
+        self.assertIn(b"Old Road Name", history_response.data)
+        self.assertIn(b"The Renamed Road", history_response.data)
         self.assertIn(b"other-user", history_response.data)
         self.assertIn(b"page-author", history_response.data)
 
@@ -272,14 +378,20 @@ class PageCreationTestCase(unittest.TestCase):
             "/pages/view/the-renamed-road/versions/1/restore"
         )
         self.assertEqual(restore_response.status_code, 302)
+        self.assertTrue(
+            restore_response.headers["Location"].endswith(
+                "/pages/view/old-road-name"
+            )
+        )
 
         restored_page_response = self.client.get(
-            "/pages/view/the-renamed-road"
+            "/pages/view/old-road-name"
         )
         self.assertIn(b"Original road notes", restored_page_response.data)
+        self.assertIn(b'<h1 class="title">Old Road Name</h1>', restored_page_response.data)
 
         with self.app.app_context():
-            page = models.Pages.query.filter_by(title="The Renamed Road").one()
+            page = models.Pages.query.filter_by(title="Old Road Name").one()
             restored_revision = db.session.get(
                 models.PageRevisions,
                 page.current_revision_id,
@@ -292,29 +404,35 @@ class PageCreationTestCase(unittest.TestCase):
 
         self.login_as(self.admin_id)
         old_revision_response = self.client.get(
-            "/pages/view/the-renamed-road/versions/2"
+            "/pages/view/old-road-name/versions/2"
         )
         self.assertIn(b"Delete Revision", old_revision_response.data)
         self.assertNotIn(b"Delete Page", old_revision_response.data)
         self.assertEqual(
             self.client.post(
-                "/pages/view/the-renamed-road/versions/1/delete"
+                "/pages/view/old-road-name/versions/1/delete"
             ).status_code,
             400,
         )
 
         delete_revision_response = self.client.post(
-            "/pages/view/the-renamed-road/versions/2/delete"
+            "/pages/view/old-road-name/versions/2/delete"
         )
         self.assertEqual(delete_revision_response.status_code, 302)
 
         with self.app.app_context():
-            page = models.Pages.query.filter_by(title="The Renamed Road").one()
+            page = models.Pages.query.filter_by(title="Old Road Name").one()
             remaining_revisions = models.PageRevisions.query.filter_by(
                 page_id=page.id
             ).all()
             self.assertEqual(len(remaining_revisions), 1)
             self.assertEqual(remaining_revisions[0].revision_number, 1)
+            self.assertIsNotNone(
+                db.session.get(
+                    models.PageRevisionTitles,
+                    remaining_revisions[0].id,
+                )
+            )
 
     def test_regular_user_cannot_create_or_edit_official_pages(self):
         forged_response = self.client.post(

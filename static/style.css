@@ -1,0 +1,19 @@
+.notifications {
+    list-style: none;
+    padding: 0;
+}
+
+.notification {
+    border: 1px solid;
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.75rem;
+}
+
+.notification-message {
+    flex: 1;
+}
+
+.notification-dismiss {
+    margin-left: auto;
+}

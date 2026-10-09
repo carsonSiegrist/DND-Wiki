@@ -63,7 +63,9 @@ def view_page(slug):
     return render_template(
         "view_page.html",
         page=page,
+        display_title=page.title,
         rendered_body=rendered_body,
+        page_metadata=get_page_display_metadata(page, current_revision),
         can_edit=can_edit_page(page),
         can_delete=is_admin(),
         delete_form=DeletePageForm(),
@@ -77,8 +79,16 @@ def view_page(slug):
 def page_versions(slug):
     page = models.Pages.query.filter_by(slug=slug).first_or_404()
     revision_rows = (
-        db.session.query(models.PageRevisions, models.User)
+        db.session.query(
+            models.PageRevisions,
+            models.User,
+            models.PageRevisionTitles.title,
+        )
         .join(models.User, models.PageRevisions.author_id == models.User.id)
+        .outerjoin(
+            models.PageRevisionTitles,
+            models.PageRevisionTitles.revision_id == models.PageRevisions.id,
+        )
         .filter(models.PageRevisions.page_id == page.id)
         .order_by(models.PageRevisions.revision_number.desc())
         .all()
@@ -102,8 +112,14 @@ def view_revision(slug, revision_number):
     return render_template(
         "view_page.html",
         page=page,
+        display_title=get_revision_title(revision, page),
         revision=revision,
         rendered_body=render_wiki_markdown(revision.body_markdown),
+        page_metadata=get_page_display_metadata(
+            page,
+            revision,
+            revision_date=True,
+        ),
         can_edit=can_edit_page(page),
         can_delete=is_admin(),
         is_old_revision=True,
@@ -132,8 +148,10 @@ def restore_revision(slug, revision_number):
     if not form.validate_on_submit():
         abort(400)
 
+    restore_page_title(page, get_revision_title(revision, page))
     page.current_revision_id = revision.id
     page.updated_at = datetime.now(timezone.utc)
+    set_page_updated_by(page, current_user.id)
     refresh_page_links(page, revision.body_markdown)
     db.session.commit()
 
@@ -159,6 +177,9 @@ def delete_revision(slug, revision_number):
     if not form.validate_on_submit():
         abort(400)
 
+    revision_title = db.session.get(models.PageRevisionTitles, revision.id)
+    if revision_title is not None:
+        db.session.delete(revision_title)
     db.session.delete(revision)
     db.session.commit()
 
@@ -299,9 +320,22 @@ def delete_page(slug):
     models.PageCategories.query.filter_by(page_id=page.id).delete(
         synchronize_session=False
     )
+    models.PageUpdateAuthors.query.filter_by(page_id=page.id).delete(
+        synchronize_session=False
+    )
 
     page.current_revision_id = None
     db.session.flush()
+    revision_ids = [
+        revision_id
+        for revision_id, in db.session.query(models.PageRevisions.id).filter_by(
+            page_id=page.id
+        )
+    ]
+    if revision_ids:
+        models.PageRevisionTitles.query.filter(
+            models.PageRevisionTitles.revision_id.in_(revision_ids)
+        ).delete(synchronize_session=False)
     models.PageRevisions.query.filter_by(page_id=page.id).delete(
         synchronize_session=False
     )
@@ -324,6 +358,41 @@ def get_revision_or_404(page, revision_number):
         page_id=page.id,
         revision_number=revision_number,
     ).first_or_404()
+
+
+def get_revision_title(revision, page):
+    revision_title = db.session.get(models.PageRevisionTitles, revision.id)
+    if revision_title is None:
+        return page.title
+    return revision_title.title
+
+
+def get_page_display_metadata(page, revision, revision_date=False):
+    categories = (
+        models.Categories.query.join(
+            models.PageCategories,
+            models.Categories.id == models.PageCategories.category_id,
+        )
+        .filter(models.PageCategories.page_id == page.id)
+        .order_by(models.Categories.name.asc())
+        .all()
+    )
+
+    update_author = db.session.get(models.PageUpdateAuthors, page.id)
+    updated_author_id = revision.author_id
+    if not revision_date and update_author is not None:
+        updated_author_id = update_author.user_id
+
+    return {
+        "original_author": db.session.get(models.User, page.created_by),
+        "created_at": page.created_at,
+        "updated_author": db.session.get(
+            models.User,
+            updated_author_id,
+        ),
+        "updated_at": revision.created_at if revision_date else page.updated_at,
+        "categories": categories,
+    }
 
 
 def populate_edit_form(form, page):
@@ -382,6 +451,11 @@ def validate_page_title(form, exclude_page_id=None):
 
     historical_title = models.PageTitleAliases.query.filter_by(title=title).first()
     if historical_title is not None:
+        if (
+            exclude_page_id is not None
+            and historical_title.page_id == exclude_page_id
+        ):
+            return True
         form.title.errors.append(HISTORICAL_TITLE_ERROR)
         return False
 
@@ -556,6 +630,52 @@ def reserve_page_title(page, title):
         db.session.flush()
 
 
+def set_page_updated_by(page, user_id):
+    update_author = db.session.get(models.PageUpdateAuthors, page.id)
+    if update_author is None:
+        db.session.add(
+            models.PageUpdateAuthors(
+                page_id=page.id,
+                user_id=user_id,
+            )
+        )
+    else:
+        update_author.user_id = user_id
+
+
+def restore_page_title(page, restored_title):
+    if restored_title == page.title:
+        return
+
+    other_page = models.Pages.query.filter(
+        models.Pages.title == restored_title,
+        models.Pages.id != page.id,
+    ).first()
+    if other_page is not None:
+        abort(409)
+
+    restored_alias = models.PageTitleAliases.query.filter_by(
+        title=restored_title
+    ).first()
+    if restored_alias is not None and restored_alias.page_id != page.id:
+        abort(409)
+
+    current_title = page.title
+    reserve_page_title(page, current_title)
+    if restored_alias is not None:
+        db.session.delete(restored_alias)
+        db.session.flush()
+
+    page.title = restored_title
+    page.slug = get_available_slug(
+        restored_title,
+        models.Pages,
+        exclude_id=page.id,
+    )
+    db.session.flush()
+    resolve_incoming_page_links(page)
+
+
 def get_available_slug(title, model, exclude_id=None):
     base_slug = slugify(title)
     slug = base_slug
@@ -634,7 +754,14 @@ def create_new_page(form, page_type):
     )
     db.session.add(revision)
     db.session.flush()
+    db.session.add(
+        models.PageRevisionTitles(
+            revision_id=revision.id,
+            title=page.title,
+        )
+    )
     page.current_revision_id = revision.id
+    set_page_updated_by(page, current_user.id)
     set_page_categories(page, form)
     refresh_page_links(page, revision.body_markdown)
     resolve_incoming_page_links(page)
@@ -643,10 +770,8 @@ def create_new_page(form, page_type):
 
 
 def update_page(page, form, page_type):
-    old_title = page.title
     title = form.title.data.strip()
-    page.title = title
-    page.slug = get_available_slug(title, models.Pages, exclude_id=page.id)
+    restore_page_title(page, title)
     page.page_type = page_type
     page.session_number = form.session_number.data if page_type == "recap" else None
     page.updated_at = datetime.now(timezone.utc)
@@ -665,9 +790,14 @@ def update_page(page, form, page_type):
     )
     db.session.add(revision)
     db.session.flush()
+    db.session.add(
+        models.PageRevisionTitles(
+            revision_id=revision.id,
+            title=page.title,
+        )
+    )
     page.current_revision_id = revision.id
+    set_page_updated_by(page, current_user.id)
     set_page_categories(page, form)
-    if old_title != page.title:
-        reserve_page_title(page, old_title)
     refresh_page_links(page, revision.body_markdown)
     resolve_incoming_page_links(page)

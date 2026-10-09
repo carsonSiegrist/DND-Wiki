@@ -158,6 +158,20 @@ class PageTitleAliases(db.Model):
     )
 
 
+class PageUpdateAuthors(db.Model):
+    __tablename__ = "page_update_authors"
+
+    page_id: Mapped[int] = mapped_column(
+        db.ForeignKey("pages.id"),
+        primary_key=True
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        db.ForeignKey("users.id"),
+        nullable=False
+    )
+
+
 class PageCategories(db.Model):
     __tablename__ = "page_categories"
 
@@ -210,6 +224,20 @@ class PageRevisions(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint('page_id', 'revision_number', name='unique_page_revision'),
+    )
+
+
+class PageRevisionTitles(db.Model):
+    __tablename__ = "page_revision_titles"
+
+    revision_id: Mapped[int] = mapped_column(
+        db.ForeignKey("page_revisions.id"),
+        primary_key=True
+    )
+
+    title: Mapped[str] = mapped_column(
+        String(200),
+        nullable=False
     )
 
 class PageLinks(db.Model):

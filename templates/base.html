@@ -18,15 +18,24 @@
 
     <header>
         <h1 class="{% block header_class %}{% endblock %}">{% block header %}D&amp;D Wiki{% endblock %}</h1>
+        {% block header_details %}{% endblock %}
     </header>
 
     {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
-            <ul class="flashes">
+            <ul class="notifications">
                 {% for category, message in messages %}
-                    <li class="{{ category }}">
-                        {% if category == "error" %}<strong>Error:</strong>{% endif %}
-                        {{ message }}
+                    <li class="notification {{ category }}" role="status">
+                        <span class="notification-icon" aria-hidden="true">ⓘ</span>
+                        <span class="notification-message">
+                            {% if category == "error" %}<strong>Error:</strong>{% endif %}
+                            {{ message }}
+                        </span>
+                        <button
+                            type="button"
+                            class="notification-dismiss"
+                            aria-label="Dismiss notification"
+                        >×</button>
                     </li>
                 {% endfor %}
             </ul>
@@ -36,6 +45,14 @@
     <main>
         {% block content %}{% endblock %}
     </main>
+
+    <script>
+        document.querySelectorAll(".notification-dismiss").forEach(button => {
+            button.addEventListener("click", () => {
+                button.closest(".notification").remove();
+            });
+        });
+    </script>
 
     {% block scripts %}{% endblock %}
 </body>
