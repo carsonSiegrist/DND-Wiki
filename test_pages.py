@@ -1,5 +1,7 @@
 import unittest
 
+from sqlalchemy import text
+
 from app import create_app
 from extensions import db
 from manage_user_role import update_user_role
@@ -767,8 +769,12 @@ class PageCreationTestCase(unittest.TestCase):
         self.assertIn(b'href="/">Home</a>', authenticated_response.data)
         self.assertIn(b'href="/pages">All Pages</a>', authenticated_response.data)
         self.assertIn(b'href="/categories">Categories</a>', authenticated_response.data)
+        self.assertIn(b'action="/search"', authenticated_response.data)
+        self.assertIn(b'name="q"', authenticated_response.data)
         self.assertIn(b'class="user-navigation"', authenticated_response.data)
         self.assertIn(b"page-author", authenticated_response.data)
+        self.assertIn(b'action="/auth/logout"', authenticated_response.data)
+        self.assertIn(b">Log Out</button>", authenticated_response.data)
         self.assertIn(b'href="/static/style.css"', authenticated_response.data)
 
         with self.client.session_transaction() as session:
@@ -787,6 +793,7 @@ class PageCreationTestCase(unittest.TestCase):
             self.assertIn(b'href="/categories">Categories</a>', response.data)
             self.assertIn(b'href="/auth/login">Log In</a>', response.data)
             self.assertIn(b'href="/auth/register">Register</a>', response.data)
+            self.assertNotIn(b">Log Out</button>", response.data)
             self.assertIn(b'href="/static/style.css"', response.data)
 
     def test_all_pages_and_category_indexes(self):
@@ -868,6 +875,206 @@ class PageCreationTestCase(unittest.TestCase):
             category_response.data.index(b">Alpha</a>"),
             category_response.data.index(b">Zebra</a>"),
         )
+
+    def test_homepage_shows_most_wanted_and_ten_recent_revisions(self):
+        page_data = [
+            (
+                "Wanted Source One",
+                "[[Missing Temple]] [[Other Mystery]] [[Missing Temple]] "
+                "[[Existing Topic]]",
+            ),
+            (
+                "Wanted Source Two",
+                "[[Missing Temple]] [[Existing Topic]]",
+            ),
+            ("Existing Topic", "This page resolves its incoming links."),
+        ]
+        page_data.extend(
+            (f"Activity Page {number}", f"Activity body {number}")
+            for number in range(1, 9)
+        )
+
+        for title, body_markdown in page_data:
+            response = self.client.post(
+                "/pages/new",
+                data={
+                    "title": title,
+                    "body_markdown": body_markdown,
+                },
+            )
+            self.assertEqual(response.status_code, 302)
+
+        self.login_as(self.other_user_id)
+        edit_response = self.client.post(
+            "/pages/edit/wanted-source-one",
+            data={
+                "title": "Wanted Source One",
+                "body_markdown": page_data[0][1],
+                "edit_summary": "Clarified the missing leads",
+            },
+        )
+        self.assertEqual(edit_response.status_code, 302)
+
+        home_response = self.client.get("/")
+        self.assertEqual(home_response.status_code, 200)
+        compact_home = " ".join(home_response.get_data(as_text=True).split())
+
+        self.assertIn("Most Wanted", compact_home)
+        self.assertIn(
+            '<td>2</td> <td><a href="/pages/new?title=Missing+Temple">'
+            "Missing Temple</a></td>",
+            compact_home,
+        )
+        self.assertIn(
+            '<td>1</td> <td><a href="/pages/new?title=Other+Mystery">'
+            "Other Mystery</a></td>",
+            compact_home,
+        )
+        self.assertLess(
+            compact_home.index(">Missing Temple</a>"),
+            compact_home.index(">Other Mystery</a>"),
+        )
+        self.assertNotIn("/pages/new?title=Existing+Topic", compact_home)
+
+        self.assertIn("Recent Activity", compact_home)
+        self.assertEqual(
+            home_response.data.count(b'class="recent-revision-row"'),
+            10,
+        )
+        self.assertIn(
+            '<a href="/pages/view/wanted-source-one">Wanted Source One</a> '
+            "</td> <td>Clarified the missing leads</td>",
+            compact_home,
+        )
+        self.assertIn("<td>other-user</td>", compact_home)
+
+        create_wanted_response = self.client.post(
+            "/pages/new",
+            data={
+                "title": "Missing Temple",
+                "body_markdown": "The wanted page now exists.",
+            },
+        )
+        self.assertEqual(create_wanted_response.status_code, 302)
+
+        resolved_home_response = self.client.get("/")
+        self.assertNotIn(
+            b'/pages/new?title=Missing+Temple',
+            resolved_home_response.data,
+        )
+
+    def test_search_prefers_titles_and_highlights_the_first_content_match(self):
+        title_match_response = self.client.post(
+            "/pages/new",
+            data={
+                "title": "Red Wizard",
+                "body_markdown": "The opening overview of this mysterious person.",
+            },
+        )
+        self.assertEqual(title_match_response.status_code, 302)
+
+        content_match_response = self.client.post(
+            "/pages/new",
+            data={
+                "title": "Yellow Wizard",
+                "body_markdown": (
+                    "A harmless beginning that eventually reveals she fears the "
+                    "Red Wizard greatly. A later Red Wizard reference follows. "
+                    "<script>alert('danger')</script>"
+                ),
+            },
+        )
+        self.assertEqual(content_match_response.status_code, 302)
+
+        response = self.client.get("/search?q=Red+Wizard")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"2 results for", response.data)
+        self.assertLess(
+            response.data.index(b'href="/pages/view/red-wizard"'),
+            response.data.index(b'href="/pages/view/yellow-wizard"'),
+        )
+        self.assertIn(b"The opening overview of this mysterious person.", response.data)
+        self.assertEqual(response.data.count(b"<mark>Red Wizard</mark>"), 1)
+        self.assertNotIn(b"<script>alert('danger')</script>", response.data)
+        self.assertNotIn(b"danger", response.data)
+
+    def test_search_index_tracks_edits_restores_and_deletion(self):
+        create_response = self.client.post(
+            "/pages/new",
+            data={
+                "title": "First Search Name",
+                "body_markdown": "The ancient lantern is hidden here.",
+            },
+        )
+        self.assertEqual(create_response.status_code, 302)
+
+        edit_response = self.client.post(
+            "/pages/edit/first-search-name",
+            data={
+                "title": "Second Search Name",
+                "body_markdown": "The silver compass replaced the earlier clue.",
+                "edit_summary": "Changed the clue",
+            },
+        )
+        self.assertEqual(edit_response.status_code, 302)
+
+        old_content_response = self.client.get("/search?q=ancient+lantern")
+        self.assertIn(b"0 results for", old_content_response.data)
+        self.assertNotIn(
+            b'href="/pages/view/second-search-name"',
+            old_content_response.data,
+        )
+
+        updated_response = self.client.get("/search?q=silver+compass")
+        self.assertIn(b'href="/pages/view/second-search-name"', updated_response.data)
+
+        restore_response = self.client.post(
+            "/pages/view/second-search-name/versions/1/restore"
+        )
+        self.assertEqual(restore_response.status_code, 302)
+
+        restored_response = self.client.get("/search?q=ancient+lantern")
+        self.assertIn(b'href="/pages/view/first-search-name"', restored_response.data)
+        removed_content_response = self.client.get("/search?q=silver+compass")
+        self.assertIn(b"0 results for", removed_content_response.data)
+
+        self.login_as(self.admin_id)
+        delete_response = self.client.post("/pages/delete/first-search-name")
+        self.assertEqual(delete_response.status_code, 302)
+
+        deleted_response = self.client.get("/search?q=ancient+lantern")
+        self.assertIn(b"0 results for", deleted_response.data)
+        self.assertNotIn(
+            b'href="/pages/view/first-search-name"',
+            deleted_response.data,
+        )
+
+    def test_search_index_can_be_rebuilt(self):
+        create_response = self.client.post(
+            "/pages/new",
+            data={
+                "title": "Rebuildable Page",
+                "body_markdown": "A phoenix keyword lives here.",
+            },
+        )
+        self.assertEqual(create_response.status_code, 302)
+
+        with self.app.app_context():
+            db.session.execute(text("DELETE FROM page_search"))
+            db.session.commit()
+
+        missing_response = self.client.get("/search?q=phoenix")
+        self.assertIn(b"0 results for", missing_response.data)
+
+        command_response = self.app.test_cli_runner().invoke(
+            args=["rebuild-search-index"]
+        )
+        self.assertEqual(command_response.exit_code, 0)
+        self.assertIn("Indexed 1 pages.", command_response.output)
+
+        rebuilt_response = self.client.get("/search?q=phoenix")
+        self.assertIn(b'href="/pages/view/rebuildable-page"', rebuilt_response.data)
 
 
 if __name__ == "__main__":

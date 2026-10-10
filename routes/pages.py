@@ -17,6 +17,7 @@ from forms.pages import (
     PageCreateForm,
     RestoreRevisionForm,
 )
+from search import delete_page_search, refresh_page_search
 
 
 pages_bp = Blueprint("pages", __name__, url_prefix="/pages")
@@ -153,6 +154,7 @@ def restore_revision(slug, revision_number):
     page.updated_at = datetime.now(timezone.utc)
     set_page_updated_by(page, current_user.id)
     refresh_page_links(page, revision.body_markdown)
+    refresh_page_search(page, revision)
     db.session.commit()
 
     flash(f"Version {revision.revision_number} restored.", "success")
@@ -304,6 +306,7 @@ def delete_page(slug):
 
     title = page.title
 
+    delete_page_search(page.id)
     reserve_page_title(page, page.title)
     models.PageTitleAliases.query.filter_by(page_id=page.id).update(
         {models.PageTitleAliases.page_id: None},
@@ -765,6 +768,7 @@ def create_new_page(form, page_type):
     set_page_categories(page, form)
     refresh_page_links(page, revision.body_markdown)
     resolve_incoming_page_links(page)
+    refresh_page_search(page, revision)
 
     return page
 
@@ -801,3 +805,4 @@ def update_page(page, form, page_type):
     set_page_categories(page, form)
     refresh_page_links(page, revision.body_markdown)
     resolve_incoming_page_links(page)
+    refresh_page_search(page, revision)

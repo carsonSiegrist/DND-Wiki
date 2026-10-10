@@ -114,3 +114,12 @@ page_links
 
 UNIQUE (source_page_id, target_title)
 UNIQUE (source_page_id, target_page_id)
+
+page_search (SQLite FTS5 virtual table)
+- page_id             unindexed, references the current page logically
+- title               searchable current page title
+- body                searchable plain-text current revision body
+
+The search index contains only current page state. It is updated when a page is
+created, edited, restored, or deleted and can be regenerated with the
+`flask rebuild-search-index` command.

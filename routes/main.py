@@ -1,8 +1,12 @@
 #For routes that don't belong elsewhere. I.e., non-auth routes.
-from flask import Blueprint, render_template
+import math
+
+from flask import Blueprint, render_template, request
 from sqlalchemy import func
 
 import models
+from extensions import db
+from search import SEARCH_QUERY_LIMIT, SEARCH_RESULT_LIMIT, search_pages
 
 
 main_bp = Blueprint("main", __name__)
@@ -10,7 +14,69 @@ main_bp = Blueprint("main", __name__)
 
 @main_bp.route("/", methods=["GET"])
 def index():
-    return render_template("index.html")
+    most_wanted_rows = (
+        db.session.query(
+            models.PageLinks.target_title,
+            func.count(func.distinct(models.PageLinks.source_page_id)).label(
+                "unique_reference_count"
+            ),
+        )
+        .filter(models.PageLinks.target_page_id.is_(None))
+        .group_by(models.PageLinks.target_title)
+        .order_by(
+            func.count(func.distinct(models.PageLinks.source_page_id)).desc(),
+            func.lower(models.PageLinks.target_title).asc(),
+        )
+        .all()
+    )
+    recent_revision_rows = (
+        db.session.query(
+            models.PageRevisions,
+            models.Pages,
+            models.User,
+            models.PageRevisionTitles.title,
+        )
+        .join(models.Pages, models.PageRevisions.page_id == models.Pages.id)
+        .join(models.User, models.PageRevisions.author_id == models.User.id)
+        .outerjoin(
+            models.PageRevisionTitles,
+            models.PageRevisionTitles.revision_id == models.PageRevisions.id,
+        )
+        .order_by(
+            models.PageRevisions.created_at.desc(),
+            models.PageRevisions.id.desc(),
+        )
+        .limit(10)
+        .all()
+    )
+
+    return render_template(
+        "index.html",
+        most_wanted_rows=most_wanted_rows,
+        recent_revision_rows=recent_revision_rows,
+    )
+
+
+@main_bp.route("/search", methods=["GET"])
+def search():
+    query = request.args.get("q", "").strip()[:SEARCH_QUERY_LIMIT]
+    requested_page = max(request.args.get("page", 1, type=int), 1)
+    all_results = search_pages(query) if query else []
+    result_count = len(all_results)
+    page_count = math.ceil(result_count / SEARCH_RESULT_LIMIT)
+    if page_count:
+        requested_page = min(requested_page, page_count)
+    start = (requested_page - 1) * SEARCH_RESULT_LIMIT
+    results = all_results[start : start + SEARCH_RESULT_LIMIT]
+
+    return render_template(
+        "search_results.html",
+        query=query,
+        results=results,
+        result_count=result_count,
+        current_page=requested_page,
+        page_count=page_count,
+    )
 
 
 @main_bp.route("/pages", methods=["GET"])

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block title %}Search - D&amp;D Wiki{% endblock %}
+{% block header %}Search{% endblock %}
+
+{% block content %}
+    {% if query %}
+        <p>{{ result_count }} result{% if result_count != 1 %}s{% endif %} for “{{ query }}”</p>
+
+        <ol class="search-results">
+            {% for result in results %}
+                <li>
+                    <h2><a href="{{ url_for('pages.view_page', slug=result.page.slug) }}">{{ result.page.title }}</a></h2>
+                    <p class="search-result-snippet">
+                        {% for segment in result.snippet %}{% if segment.highlight %}<mark>{{ segment.text }}</mark>{% else %}{{ segment.text }}{% endif %}{% endfor %}
+                    </p>
+                </li>
+            {% else %}
+                <li>No pages found.</li>
+            {% endfor %}
+        </ol>
+
+        {% if page_count > 1 %}
+            <nav class="search-pagination" aria-label="Search result pages">
+                {% if current_page > 1 %}
+                    <a href="{{ url_for('main.search', q=query, page=current_page - 1) }}">Previous</a>
+                {% endif %}
+                <span>Page {{ current_page }} of {{ page_count }}</span>
+                {% if current_page < page_count %}
+                    <a href="{{ url_for('main.search', q=query, page=current_page + 1) }}">Next</a>
+                {% endif %}
+            </nav>
+        {% endif %}
+    {% else %}
+        <p>Enter a search term to find wiki pages.</p>
+    {% endif %}
+{% endblock %}

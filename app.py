@@ -2,6 +2,7 @@
 
 import os
 
+import click
 from dotenv import load_dotenv
 from flask import Flask
 
@@ -34,7 +35,19 @@ def create_app(test_config=None):
     app.register_blueprint(pages_bp)
 
     with app.app_context():
+        from search import initialize_search_index
+
         db.create_all()
+        initialize_search_index()
+
+    @app.cli.command("rebuild-search-index")
+    def rebuild_search_index_command():
+        """Rebuild the current-page full-text search index."""
+        from search import rebuild_search_index
+
+        indexed_pages = rebuild_search_index()
+        db.session.commit()
+        click.echo(f"Indexed {indexed_pages} pages.")
 
     return app
 

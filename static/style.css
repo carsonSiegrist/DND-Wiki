@@ -1,15 +1,44 @@
 .site-navigation {
     display: flex;
+    flex-wrap: wrap;
 }
 
 .primary-navigation,
+.secondary-navigation,
 .user-navigation {
+    align-items: center;
     display: flex;
     gap: 0.5rem;
 }
 
-.user-navigation {
+.secondary-navigation {
     margin-left: auto;
+}
+
+.wiki-search {
+    display: flex;
+    gap: 0.25rem;
+}
+
+.visually-hidden {
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    padding: 0;
+    position: absolute;
+    width: 1px;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+}
+
+.search-results {
+    list-style: none;
+    padding: 0;
+}
+
+.search-pagination {
+    display: flex;
+    gap: 0.5rem;
 }
 
 .category-list {

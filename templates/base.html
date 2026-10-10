@@ -12,13 +12,30 @@
             <a href="{{ url_for('main.all_pages') }}">All Pages</a>
             <a href="{{ url_for('main.categories') }}">Categories</a>
         </div>
-        <div class="user-navigation">
-            {% if current_user.is_authenticated %}
-                <span>{{ current_user.username }}</span>
-            {% else %}
-                <a href="{{ url_for('auth.login') }}">Log In</a>
-                <a href="{{ url_for('auth.register') }}">Register</a>
-            {% endif %}
+        <div class="secondary-navigation">
+            <form class="wiki-search" action="{{ url_for('main.search') }}" method="get" role="search">
+                <label class="visually-hidden" for="wiki-search-query">Search wiki</label>
+                <input
+                    id="wiki-search-query"
+                    maxlength="200"
+                    name="q"
+                    type="search"
+                    value="{{ request.args.get('q', '') if request.endpoint == 'main.search' else '' }}"
+                    placeholder="Search the wiki"
+                >
+                <button type="submit">Search</button>
+            </form>
+            <div class="user-navigation">
+                {% if current_user.is_authenticated %}
+                    <span>{{ current_user.username }}</span>
+                    <form method="get" action="{{ url_for('auth.logout') }}">
+                        <button type="submit">Log Out</button>
+                    </form>
+                {% else %}
+                    <a href="{{ url_for('auth.login') }}">Log In</a>
+                    <a href="{{ url_for('auth.register') }}">Register</a>
+                {% endif %}
+            </div>
         </div>
     </nav>
 

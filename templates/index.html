@@ -4,4 +4,62 @@
 
 {% block content %}
     <p>Welcome to the wiki.</p>
+
+    <section>
+        <h2>Most Wanted</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th scope="col">References</th>
+                    <th scope="col">Name</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for target_title, unique_reference_count in most_wanted_rows %}
+                    <tr>
+                        <td>{{ unique_reference_count }}</td>
+                        <td><a href="{{ url_for('pages.create_page', title=target_title) }}">{{ target_title }}</a></td>
+                    </tr>
+                {% else %}
+                    <tr>
+                        <td colspan="2">No wanted pages found.</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
+
+    <section>
+        <h2>Recent Activity</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th scope="col">Title</th>
+                    <th scope="col">Change</th>
+                    <th scope="col">Time</th>
+                    <th scope="col">Author</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for revision, page, author, revision_title in recent_revision_rows %}
+                    <tr class="recent-revision-row">
+                        <td>
+                            {% if revision.id == page.current_revision_id %}
+                                <a href="{{ url_for('pages.view_page', slug=page.slug) }}">{{ revision_title or page.title }}</a>
+                            {% else %}
+                                <a href="{{ url_for('pages.view_revision', slug=page.slug, revision_number=revision.revision_number) }}">{{ revision_title or page.title }}</a>
+                            {% endif %}
+                        </td>
+                        <td>{{ revision.edit_summary or "No edit summary" }}</td>
+                        <td>{{ revision.created_at.strftime("%Y-%m-%d %H:%M:%S") }} UTC</td>
+                        <td>{{ author.username }}</td>
+                    </tr>
+                {% else %}
+                    <tr>
+                        <td colspan="4">No recent activity found.</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
 {% endblock %}
