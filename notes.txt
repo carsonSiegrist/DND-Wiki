@@ -77,9 +77,9 @@ page_title_aliases
 - title               NOT NULL, UNIQUE
 - created_at          NOT NULL, defaults to current UTC time
 
-Historical titles remain reserved. page_id becomes null when the page is
-permanently deleted, leaving a tombstone so old wiki links cannot silently
-resolve to an unrelated future page.
+Historical titles remain reserved while their page exists. Permanently
+deleting a page removes all of its title aliases so its current and historical
+titles can be used by newly created pages.
 
 page_update_authors
 - page_id             PRIMARY KEY, FK -> pages.id

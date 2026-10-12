@@ -25,4 +25,52 @@
             {% endfor %}
         </tbody>
     </table>
+
+    {% if can_manage_category %}
+        <section class="category-management">
+            <h2>Manage Category</h2>
+            <form method="POST" action="{{ url_for('main.rename_category', slug=category.slug) }}">
+                {{ rename_form.hidden_tag() }}
+                {{ rename_form.name.label }}
+                {{ rename_form.name(size=30) }}
+                {{ rename_form.submit() }}
+            </form>
+
+            <p>
+                <button type="button" id="show-category-delete-confirmation">
+                    Delete Category
+                </button>
+            </p>
+            <dialog id="category-delete-confirmation">
+                <p>
+                    Are you sure you want to permanently delete
+                    <strong>{{ category.name }}</strong>?
+                </p>
+                <p>The pages in this category will not be deleted.</p>
+                <form method="POST" action="{{ url_for('main.delete_category', slug=category.slug) }}">
+                    {{ delete_form.hidden_tag() }}
+                    {{ delete_form.submit() }}
+                    <button type="button" id="cancel-category-delete">Cancel</button>
+                </form>
+            </dialog>
+        </section>
+    {% endif %}
+{% endblock %}
+
+{% block scripts %}
+    {% if can_manage_category %}
+        <script>
+            const categoryDeleteDialog = document.getElementById(
+                "category-delete-confirmation"
+            );
+            document.getElementById("show-category-delete-confirmation").addEventListener(
+                "click",
+                () => categoryDeleteDialog.showModal(),
+            );
+            document.getElementById("cancel-category-delete").addEventListener(
+                "click",
+                () => categoryDeleteDialog.close(),
+            );
+        </script>
+    {% endif %}
 {% endblock %}

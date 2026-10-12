@@ -5,7 +5,29 @@
 {% block header %}All Pages{% endblock %}
 
 {% block content %}
-    <section>
+    <section id="official-pages">
+        <h2>Official Pages</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th scope="col">Title</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for page in official_pages %}
+                    <tr>
+                        <td><a href="{{ url_for('pages.view_page', slug=page.slug) }}">{{ page.title }}</a></td>
+                    </tr>
+                {% else %}
+                    <tr>
+                        <td>No official pages found.</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
+
+    <section id="recap-pages">
         <h2>Recaps</h2>
         <table>
             <thead>
@@ -31,7 +53,7 @@
         </table>
     </section>
 
-    <section>
+    <section id="article-pages">
         <h2>Articles</h2>
         <table>
             <thead>

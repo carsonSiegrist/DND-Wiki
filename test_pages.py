@@ -170,7 +170,10 @@ class PageCreationTestCase(unittest.TestCase):
 
         view_response = self.client.get(response.headers["Location"])
         self.assertEqual(view_response.status_code, 200)
-        self.assertIn(b'<h1 class="title">Into the Sunken Temple</h1>', view_response.data)
+        self.assertIn(
+            b'<h1 class="title">Into the Sunken Temple -- Session 4 Recap</h1>',
+            view_response.data,
+        )
         self.assertIn(b"<h1>A dangerous expedition</h1>", view_response.data)
         self.assertIn(b"View Page History", view_response.data)
         self.assertIn(b"localStorage.removeItem", view_response.data)
@@ -180,8 +183,11 @@ class PageCreationTestCase(unittest.TestCase):
         self.assertIn(b"Last Updated Author", view_response.data)
         self.assertIn(b"Last Updated Date", view_response.data)
         self.assertIn(b"page-author", view_response.data)
-        self.assertIn(b"Recap Number", view_response.data)
-        self.assertIn(b"<dd>4</dd>", view_response.data)
+        self.assertIn(b'<p class="page-metadata">', view_response.data)
+        self.assertNotIn(b'<dl class="page-metadata">', view_response.data)
+        self.assertNotIn(b"Recap Number", view_response.data)
+        self.assertIn(b'action="/pages/edit/into-the-sunken-temple"', view_response.data)
+        self.assertIn(b">Edit Page</button>", view_response.data)
         self.assertIn(b'href="/categories/discoveries"', view_response.data)
         self.assertIn(b'href="/categories/factions"', view_response.data)
         self.assertIn(b'href="/categories/locations"', view_response.data)
@@ -426,7 +432,10 @@ class PageCreationTestCase(unittest.TestCase):
             "/pages/view/old-road-name"
         )
         self.assertIn(b"Original road notes", restored_page_response.data)
-        self.assertIn(b'<h1 class="title">Old Road Name</h1>', restored_page_response.data)
+        self.assertIn(
+            b'<h1 class="title">Old Road Name -- Session 4 Recap</h1>',
+            restored_page_response.data,
+        )
 
         with self.app.app_context():
             page = models.Pages.query.filter_by(title="Old Road Name").one()
@@ -787,11 +796,7 @@ class PageCreationTestCase(unittest.TestCase):
                     {"Target Page", "Renamed Target"}
                 )
             ).all()
-            self.assertEqual(
-                {alias.title for alias in aliases},
-                {"Target Page", "Renamed Target"},
-            )
-            self.assertTrue(all(alias.page_id is None for alias in aliases))
+            self.assertEqual(aliases, [])
 
         unresolved_response = self.client.get("/pages/view/source-page")
         self.assertIn(
@@ -799,12 +804,45 @@ class PageCreationTestCase(unittest.TestCase):
             unresolved_response.data,
         )
 
+        self.login_as(self.user_id)
+        recreated_historical_title = self.client.post(
+            "/pages/new",
+            data={
+                "title": "Target Page",
+                "body_markdown": "Recreated from the historical title.",
+            },
+        )
+        self.assertEqual(recreated_historical_title.status_code, 302)
+
+        recreated_current_title = self.client.post(
+            "/pages/new",
+            data={
+                "title": "Renamed Target",
+                "body_markdown": "Recreated from the title at deletion.",
+            },
+        )
+        self.assertEqual(recreated_current_title.status_code, 302)
+
+        with self.app.app_context():
+            recreated_titles = {
+                page.title
+                for page in models.Pages.query.filter(
+                    models.Pages.title.in_({"Target Page", "Renamed Target"})
+                )
+            }
+            self.assertEqual(
+                recreated_titles,
+                {"Target Page", "Renamed Target"},
+            )
+
     def test_pages_use_shared_navigation_and_stylesheet(self):
         authenticated_response = self.client.get("/pages/new")
 
         self.assertIn(b'href="/">Home</a>', authenticated_response.data)
         self.assertIn(b'href="/pages">All Pages</a>', authenticated_response.data)
         self.assertIn(b'href="/categories">Categories</a>', authenticated_response.data)
+        self.assertIn(b'action="/pages/new"', authenticated_response.data)
+        self.assertIn(b">Create Page</button>", authenticated_response.data)
         self.assertIn(b'action="/search"', authenticated_response.data)
         self.assertIn(b'name="q"', authenticated_response.data)
         self.assertIn(b'class="user-navigation"', authenticated_response.data)
@@ -827,6 +865,7 @@ class PageCreationTestCase(unittest.TestCase):
             self.assertIn(b'href="/">Home</a>', response.data)
             self.assertIn(b'href="/pages">All Pages</a>', response.data)
             self.assertIn(b'href="/categories">Categories</a>', response.data)
+            self.assertNotIn(b">Create Page</button>", response.data)
             self.assertIn(b'href="/auth/login">Log In</a>', response.data)
             self.assertIn(b'href="/auth/register">Register</a>', response.data)
             self.assertNotIn(b">Log Out</button>", response.data)
@@ -866,10 +905,40 @@ class PageCreationTestCase(unittest.TestCase):
         )
         self.assertEqual(recap_response.status_code, 302)
 
+        self.login_as(self.admin_id)
+        official_response = self.client.post(
+            "/pages/new",
+            data={
+                "title": "Campaign Rules",
+                "page_type": "official",
+                "body_markdown": "The official campaign rules.",
+            },
+        )
+        self.assertEqual(official_response.status_code, 302)
+        self.login_as(self.user_id)
+
         all_pages_response = self.client.get("/pages")
         self.assertEqual(all_pages_response.status_code, 200)
+        self.assertIn(b"Official Pages", all_pages_response.data)
         self.assertIn(b"Recap Number", all_pages_response.data)
         self.assertIn(b"Articles", all_pages_response.data)
+        official_section_start = all_pages_response.data.index(
+            b'id="official-pages"'
+        )
+        recap_section_start = all_pages_response.data.index(b'id="recap-pages"')
+        article_section_start = all_pages_response.data.index(
+            b'id="article-pages"'
+        )
+        self.assertLess(official_section_start, recap_section_start)
+        self.assertLess(recap_section_start, article_section_start)
+        self.assertIn(
+            b"Campaign Rules",
+            all_pages_response.data[official_section_start:recap_section_start],
+        )
+        self.assertNotIn(
+            b"Campaign Rules",
+            all_pages_response.data[article_section_start:],
+        )
         self.assertLess(
             all_pages_response.data.index(b"An Earlier Adventure"),
             all_pages_response.data.index(b"A Later Recap"),
@@ -911,6 +980,81 @@ class PageCreationTestCase(unittest.TestCase):
             category_response.data.index(b">Alpha</a>"),
             category_response.data.index(b">Zebra</a>"),
         )
+        self.assertNotIn(b"Manage Category", category_response.data)
+
+    def test_only_admin_can_rename_and_delete_categories(self):
+        create_response = self.client.post(
+            "/pages/new",
+            data={
+                "title": "Categorized Page",
+                "categories": [str(self.category_id)],
+                "body_markdown": "This page belongs to a category.",
+            },
+        )
+        self.assertEqual(create_response.status_code, 302)
+
+        rename_response = self.client.post(
+            "/categories/locations/rename",
+            data={"name": "Places and Regions"},
+        )
+        self.assertEqual(rename_response.status_code, 403)
+        delete_response = self.client.post("/categories/locations/delete")
+        self.assertEqual(delete_response.status_code, 403)
+
+        self.login_as(self.admin_id)
+        manage_response = self.client.get("/categories/locations")
+        self.assertIn(b"Manage Category", manage_response.data)
+        self.assertIn(b'action="/categories/locations/rename"', manage_response.data)
+        self.assertIn(b'action="/categories/locations/delete"', manage_response.data)
+
+        rename_response = self.client.post(
+            "/categories/locations/rename",
+            data={"name": "Places and Regions"},
+        )
+        self.assertEqual(rename_response.status_code, 302)
+        self.assertTrue(
+            rename_response.headers["Location"].endswith(
+                "/categories/places-and-regions"
+            )
+        )
+        self.assertEqual(self.client.get("/categories/locations").status_code, 404)
+        renamed_response = self.client.get("/categories/places-and-regions")
+        self.assertEqual(renamed_response.status_code, 200)
+        self.assertIn(b"Categorized Page", renamed_response.data)
+
+        with self.app.app_context():
+            renamed_category = models.Categories.query.filter_by(
+                slug="places-and-regions"
+            ).one()
+            renamed_category_id = renamed_category.id
+            page = models.Pages.query.filter_by(title="Categorized Page").one()
+            self.assertIsNotNone(
+                models.PageCategories.query.filter_by(
+                    page_id=page.id,
+                    category_id=renamed_category_id,
+                ).first()
+            )
+
+        delete_response = self.client.post(
+            "/categories/places-and-regions/delete"
+        )
+        self.assertEqual(delete_response.status_code, 302)
+        self.assertTrue(delete_response.headers["Location"].endswith("/categories"))
+
+        with self.app.app_context():
+            self.assertIsNone(db.session.get(models.Categories, renamed_category_id))
+            self.assertEqual(
+                models.PageCategories.query.filter_by(
+                    category_id=renamed_category_id
+                ).count(),
+                0,
+            )
+            self.assertIsNotNone(
+                models.Pages.query.filter_by(title="Categorized Page").first()
+            )
+
+        page_response = self.client.get("/pages/view/categorized-page")
+        self.assertEqual(page_response.status_code, 200)
 
     def test_homepage_shows_most_wanted_and_ten_recent_revisions(self):
         page_data = [
@@ -999,7 +1143,7 @@ class PageCreationTestCase(unittest.TestCase):
             resolved_home_response.data,
         )
 
-    def test_search_prefers_titles_and_highlights_the_first_content_match(self):
+    def test_search_prefers_titles_and_highlights_the_best_content_match(self):
         title_match_response = self.client.post(
             "/pages/new",
             data={
@@ -1014,8 +1158,9 @@ class PageCreationTestCase(unittest.TestCase):
             data={
                 "title": "Yellow Wizard",
                 "body_markdown": (
-                    "A harmless beginning that eventually reveals she fears the "
-                    "Red Wizard greatly. A later Red Wizard reference follows. "
+                    "Red paint marks an unimportant door near the entrance. "
+                    "A harmless beginning eventually reveals she fears the "
+                    "Red archmage known as the Wizard greatly. "
                     "<script>alert('danger')</script>"
                 ),
             },
@@ -1031,7 +1176,11 @@ class PageCreationTestCase(unittest.TestCase):
             response.data.index(b'href="/pages/view/yellow-wizard"'),
         )
         self.assertIn(b"The opening overview of this mysterious person.", response.data)
-        self.assertEqual(response.data.count(b"<mark>Red Wizard</mark>"), 1)
+        self.assertIn(
+            b"<mark>Red archmage known as the Wizard</mark>",
+            response.data,
+        )
+        self.assertNotIn(b"<mark>Red</mark> paint", response.data)
         self.assertNotIn(b"<script>alert('danger')</script>", response.data)
         self.assertNotIn(b"danger", response.data)
 

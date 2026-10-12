@@ -203,14 +203,15 @@ def build_snippet(body, normalized_query, tokens, title_match):
     if title_match:
         return [{"text": truncate_text(body, 220), "highlight": False}]
 
-    match = find_first_match(body, normalized_query, tokens)
-    if match is None:
+    match_span = find_best_match(body, normalized_query, tokens)
+    if match_span is None:
         return [{"text": truncate_text(body, 220), "highlight": False}]
 
-    start = get_context_start(body, match.start(), 80)
-    end = get_context_end(body, match.end(), 140)
-    before = body[start:match.start()]
-    after = body[match.end():end]
+    match_start, match_end = match_span
+    start = get_context_start(body, match_start, 80)
+    end = get_context_end(body, match_end, 140)
+    before = body[start:match_start]
+    after = body[match_end:end]
     if start > 0:
         before = f"…{before}"
     if end < len(body):
@@ -218,32 +219,97 @@ def build_snippet(body, normalized_query, tokens, title_match):
 
     return [
         {"text": before, "highlight": False},
-        {"text": body[match.start():match.end()], "highlight": True},
+        {"text": body[match_start:match_end], "highlight": True},
         {"text": after, "highlight": False},
     ]
 
 
-def find_first_match(body, normalized_query, tokens):
+def find_best_match(body, normalized_query, tokens):
+    """Return the strongest query span rather than the earliest token."""
     phrase_pattern = r"\s+".join(
         re.escape(part) for part in normalized_query.split()
     )
-    phrase_match = re.search(phrase_pattern, body, re.IGNORECASE)
-    if phrase_match is not None:
-        return phrase_match
-
-    token_matches = []
-    for token in tokens:
-        token_match = re.search(
-            rf"(?<!\w){re.escape(token)}(?!\w)",
+    phrase_matches = list(
+        re.finditer(
+            rf"(?<!\w){phrase_pattern}(?!\w)",
             body,
             re.IGNORECASE,
         )
-        if token_match is not None:
-            token_matches.append(token_match)
+    )
+    token_occurrences = get_token_occurrences(body, tokens)
+    if phrase_matches:
+        best_phrase = max(
+            phrase_matches,
+            key=lambda match: (
+                count_nearby_tokens(
+                    token_occurrences,
+                    match.start(),
+                    match.end(),
+                ),
+                -match.start(),
+            ),
+        )
+        return best_phrase.start(), best_phrase.end()
 
-    if not token_matches:
+    if not token_occurrences:
         return None
-    return min(token_matches, key=lambda match: match.start())
+
+    required_tokens = set(tokens)
+    token_counts = {}
+    left_index = 0
+    best_window = None
+    for right_index, (_, _, token) in enumerate(token_occurrences):
+        token_counts[token] = token_counts.get(token, 0) + 1
+        while len(token_counts) == len(required_tokens):
+            window_start = token_occurrences[left_index][0]
+            window_end = token_occurrences[right_index][1]
+            candidate = (window_end - window_start, window_start, window_end)
+            if best_window is None or candidate < best_window:
+                best_window = candidate
+
+            left_token = token_occurrences[left_index][2]
+            token_counts[left_token] -= 1
+            if token_counts[left_token] == 0:
+                del token_counts[left_token]
+            left_index += 1
+
+    if best_window is not None and best_window[0] <= 160:
+        return best_window[1], best_window[2]
+
+    best_occurrence = max(
+        token_occurrences,
+        key=lambda occurrence: (
+            count_nearby_tokens(
+                token_occurrences,
+                occurrence[0],
+                occurrence[1],
+            ),
+            -occurrence[0],
+        ),
+    )
+    return best_occurrence[0], best_occurrence[1]
+
+
+def get_token_occurrences(body, tokens):
+    occurrences = []
+    for token in tokens:
+        for match in re.finditer(
+            rf"(?<!\w){re.escape(token)}(?!\w)",
+            body,
+            re.IGNORECASE,
+        ):
+            occurrences.append((match.start(), match.end(), token))
+    return sorted(occurrences, key=lambda occurrence: (occurrence[0], occurrence[1]))
+
+
+def count_nearby_tokens(occurrences, match_start, match_end):
+    context_start = max(0, match_start - 100)
+    context_end = match_end + 100
+    return sum(
+        1
+        for occurrence_start, occurrence_end, _ in occurrences
+        if occurrence_start >= context_start and occurrence_end <= context_end
+    )
 
 
 def get_context_start(text_value, match_start, context_length):

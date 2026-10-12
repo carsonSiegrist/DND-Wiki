@@ -1,37 +1,28 @@
 {% extends "base.html" %}
 
-{% block title %}D&amp;D Wiki - {{ display_title }}{% endblock %}
+{% block title %}D&amp;D Wiki - {{ display_title }}{% if page.page_type == "recap" %} -- Session {{ page.session_number }} Recap{% endif %}{% endblock %}
 {% block header_class %}title{% endblock %}
-{% block header %}{{ display_title }}{% endblock %}
+{% block header %}{{ display_title }}{% if page.page_type == "recap" %} -- Session {{ page.session_number }} Recap{% endif %}{% endblock %}
 
 {% block header_details %}
-    <dl class="page-metadata">
-        <dt>Original Author</dt>
-        <dd>{{ page_metadata.original_author.username }}</dd>
-
-        <dt>Original Creation Date</dt>
-        <dd>{{ page_metadata.created_at.strftime("%Y-%m-%d %H:%M:%S") }} UTC</dd>
-
-        <dt>Last Updated Author</dt>
-        <dd>{{ page_metadata.updated_author.username }}</dd>
-
-        <dt>Last Updated Date</dt>
-        <dd>{{ page_metadata.updated_at.strftime("%Y-%m-%d %H:%M:%S") }} UTC</dd>
-
-        <dt>Categories</dt>
-        <dd>
+    <p class="page-metadata">
+        <span>Original Author: {{ page_metadata.original_author.username }}</span>
+        <span class="metadata-separator" aria-hidden="true">·</span>
+        <span>Original Creation Date: {{ page_metadata.created_at.strftime("%Y-%m-%d %H:%M:%S") }} UTC</span>
+        <span class="metadata-separator" aria-hidden="true">·</span>
+        <span>Last Updated Author: {{ page_metadata.updated_author.username }}</span>
+        <span class="metadata-separator" aria-hidden="true">·</span>
+        <span>Last Updated Date: {{ page_metadata.updated_at.strftime("%Y-%m-%d %H:%M:%S") }} UTC</span>
+        <span class="metadata-separator" aria-hidden="true">·</span>
+        <span>
+            Categories:
             {% for category in page_metadata.categories %}
-                <a href="/categories/{{ category.slug }}">{{ category.name }}</a>{% if not loop.last %}, {% endif %}
+                <a href="{{ url_for('main.view_category', slug=category.slug) }}">{{ category.name }}</a>{% if not loop.last %}, {% endif %}
             {% else %}
                 None
             {% endfor %}
-        </dd>
-
-        {% if page.page_type == "recap" %}
-            <dt>Recap Number</dt>
-            <dd>{{ page.session_number }}</dd>
-        {% endif %}
-    </dl>
+        </span>
+    </p>
 {% endblock %}
 
 {% block content %}
@@ -55,7 +46,9 @@
         {% endif %}
     {% else %}
         {% if can_edit %}
-            <p><a href="{{ url_for('pages.edit_page', slug=page.slug) }}">Edit Page</a></p>
+            <form class="page-action" method="GET" action="{{ url_for('pages.edit_page', slug=page.slug) }}">
+                <button type="submit">Edit Page</button>
+            </form>
         {% endif %}
     {% endif %}
 

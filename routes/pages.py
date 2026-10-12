@@ -336,9 +336,7 @@ def delete_page(slug):
     title = page.title
 
     delete_page_search(page.id)
-    reserve_page_title(page, page.title)
-    models.PageTitleAliases.query.filter_by(page_id=page.id).update(
-        {models.PageTitleAliases.page_id: None},
+    models.PageTitleAliases.query.filter_by(page_id=page.id).delete(
         synchronize_session=False,
     )
 
