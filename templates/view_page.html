@@ -42,7 +42,9 @@
         </p>
     {% endif %}
 
-    {{ rendered_body | safe }}
+    <div class="wiki-page-body">
+        {{ rendered_body | safe }}
+    </div>
 
     {% if is_old_revision %}
         {% if can_edit %}

@@ -1,5 +1,11 @@
+import io
+import os
+import re
+import tempfile
 import unittest
+from uuid import uuid4
 
+from PIL import Image
 from sqlalchemy import text
 
 from app import create_app
@@ -10,12 +16,14 @@ import models
 
 class PageCreationTestCase(unittest.TestCase):
     def setUp(self):
+        self.upload_directory = tempfile.TemporaryDirectory()
         self.app = create_app(
             {
                 "TESTING": True,
                 "SECRET_KEY": "test-secret",
                 "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:",
                 "WTF_CSRF_ENABLED": False,
+                "IMAGE_UPLOAD_ROOT": self.upload_directory.name,
             }
         )
         self.client = self.app.test_client()
@@ -74,12 +82,40 @@ class PageCreationTestCase(unittest.TestCase):
     def tearDown(self):
         with self.app.app_context():
             db.session.remove()
+        self.upload_directory.cleanup()
 
     def login_as(self, user_id):
         with self.client.session_transaction() as session:
             session.clear()
             session["_user_id"] = str(user_id)
             session["_fresh"] = True
+
+    def make_image_upload(self, size=(64, 48), image_format="PNG"):
+        image_data = io.BytesIO()
+        image = Image.new("RGB", size, color=(120, 40, 180))
+        image.save(image_data, format=image_format)
+        image.close()
+        image_data.seek(0)
+        return image_data
+
+    def upload_image(
+        self,
+        upload_session,
+        filename="campaign-map.png",
+        size=(64, 48),
+        page_id=None,
+    ):
+        data = {
+            "upload_session": upload_session,
+            "images": (self.make_image_upload(size=size), filename),
+        }
+        if page_id is not None:
+            data["page_id"] = str(page_id)
+        return self.client.post(
+            "/images/upload",
+            data=data,
+            content_type="multipart/form-data",
+        )
 
     def test_form_defaults_to_next_session_and_has_draft_support(self):
         response = self.client.get("/pages/new")
@@ -1075,6 +1111,446 @@ class PageCreationTestCase(unittest.TestCase):
 
         rebuilt_response = self.client.get("/search?q=phoenix")
         self.assertIn(b'href="/pages/view/rebuildable-page"', rebuilt_response.data)
+
+    def test_multiple_images_are_processed_attached_and_publicly_rendered(self):
+        upload_session = str(uuid4())
+        upload_response = self.client.post(
+            "/images/upload",
+            data={
+                "upload_session": upload_session,
+                "images": [
+                    (self.make_image_upload(size=(7000, 100)), "wide-map.png"),
+                    (self.make_image_upload(size=(320, 240)), "portrait.png"),
+                ],
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(upload_response.status_code, 201)
+        uploaded_images = upload_response.get_json()["images"]
+        self.assertEqual(len(uploaded_images), 2)
+
+        first_image = uploaded_images[0]
+        with self.client.session_transaction() as session:
+            session.clear()
+        self.assertEqual(
+            self.client.get(first_image["thumbnail_url"]).status_code,
+            403,
+        )
+
+        self.login_as(self.user_id)
+        image_markdown = "\n\n".join((
+            (
+                f"[![Image 1]({uploaded_images[0]['display_url']})]"
+                f"({uploaded_images[0]['master_url']})"
+            ),
+            (
+                f'<img src="{uploaded_images[1]["display_url"]}" '
+                'alt="Image 2">'
+            ),
+        ))
+        create_response = self.client.post(
+            "/pages/new",
+            data={
+                "image_upload_session": upload_session,
+                "title": "Illustrated Expedition",
+                "body_markdown": image_markdown,
+            },
+        )
+        self.assertEqual(create_response.status_code, 302)
+
+        with self.app.app_context():
+            from image_service import get_variant_path
+
+            page = models.Pages.query.filter_by(
+                title="Illustrated Expedition"
+            ).one()
+            assets = models.ImageAssets.query.filter_by(page_id=page.id).all()
+            revision_images = models.RevisionImages.query.filter_by(
+                revision_id=page.current_revision_id
+            ).all()
+            self.assertEqual(len(assets), 2)
+            self.assertEqual(len(revision_images), 2)
+
+            wide_asset = db.session.get(models.ImageAssets, first_image["id"])
+            expected_maximums = {
+                "master": 6000,
+                "display": 2000,
+                "thumbnail": 320,
+            }
+            for variant, maximum_dimension in expected_maximums.items():
+                variant_path = get_variant_path(wide_asset, variant)
+                self.assertTrue(variant_path.is_file())
+                with Image.open(variant_path) as stored_image:
+                    self.assertLessEqual(max(stored_image.size), maximum_dimension)
+                    self.assertEqual(stored_image.format, "WEBP")
+
+        with self.client.session_transaction() as session:
+            session.clear()
+        view_response = self.client.get("/pages/view/illustrated-expedition")
+        self.assertEqual(view_response.status_code, 200)
+        self.assertIn(first_image["display_url"].encode(), view_response.data)
+        self.assertIn(first_image["master_url"].encode(), view_response.data)
+        self.assertIn(b'loading="lazy"', view_response.data)
+        self.assertIn(b'decoding="async"', view_response.data)
+        image_response = self.client.get(first_image["display_url"])
+        self.assertEqual(image_response.status_code, 200)
+        self.assertIn("public", image_response.headers["Cache-Control"])
+        self.assertIn("immutable", image_response.headers["Cache-Control"])
+        image_response.close()
+        self.assertEqual(
+            self.client.get(f"/images/{first_image['id']}/unknown").status_code,
+            404,
+        )
+
+    def test_images_remain_with_history_and_restore_with_old_revision(self):
+        upload_session = str(uuid4())
+        uploaded_image = self.upload_image(upload_session).get_json()["images"][0]
+        image_markdown = (
+            f"[![Campaign map]({uploaded_image['display_url']})]"
+            f"({uploaded_image['master_url']})"
+        )
+        create_response = self.client.post(
+            "/pages/new",
+            data={
+                "image_upload_session": upload_session,
+                "title": "Changing Map",
+                "body_markdown": image_markdown,
+            },
+        )
+        self.assertEqual(create_response.status_code, 302)
+
+        edit_response = self.client.post(
+            "/pages/edit/changing-map",
+            data={
+                "image_upload_session": str(uuid4()),
+                "title": "Changing Map",
+                "body_markdown": "The current revision has no map.",
+                "edit_summary": "Removed the outdated map",
+            },
+        )
+        self.assertEqual(edit_response.status_code, 302)
+
+        with self.app.app_context():
+            page = models.Pages.query.filter_by(title="Changing Map").one()
+            revisions = models.PageRevisions.query.filter_by(
+                page_id=page.id
+            ).order_by(models.PageRevisions.revision_number).all()
+            self.assertEqual(
+                models.RevisionImages.query.filter_by(
+                    revision_id=revisions[0].id
+                ).count(),
+                1,
+            )
+            self.assertEqual(
+                models.RevisionImages.query.filter_by(
+                    revision_id=revisions[1].id
+                ).count(),
+                0,
+            )
+
+        with self.client.session_transaction() as session:
+            session.clear()
+        old_revision_response = self.client.get(
+            "/pages/view/changing-map/versions/1"
+        )
+        self.assertIn(uploaded_image["display_url"].encode(), old_revision_response.data)
+        image_response = self.client.get(uploaded_image["display_url"])
+        self.assertEqual(image_response.status_code, 200)
+        image_response.close()
+
+        self.login_as(self.other_user_id)
+        restore_response = self.client.post(
+            "/pages/view/changing-map/versions/1/restore"
+        )
+        self.assertEqual(restore_response.status_code, 302)
+        restored_response = self.client.get("/pages/view/changing-map")
+        self.assertIn(uploaded_image["display_url"].encode(), restored_response.data)
+
+        cross_page_response = self.client.post(
+            "/pages/new",
+            data={
+                "image_upload_session": str(uuid4()),
+                "title": "Improper Image Reuse",
+                "body_markdown": image_markdown,
+            },
+        )
+        self.assertEqual(cross_page_response.status_code, 200)
+        self.assertIn(b"another page cannot be attached", cross_page_response.data)
+
+        code_example_response = self.client.post(
+            "/pages/new",
+            data={
+                "image_upload_session": str(uuid4()),
+                "title": "Image Syntax Notes",
+                "body_markdown": f"`{uploaded_image['display_url']}`",
+            },
+        )
+        self.assertEqual(code_example_response.status_code, 302)
+
+        with self.app.app_context():
+            from image_service import get_asset_directory
+
+            image_directory = get_asset_directory(uploaded_image["id"])
+            self.assertTrue(image_directory.is_dir())
+
+        self.login_as(self.admin_id)
+        delete_response = self.client.post("/pages/delete/changing-map")
+        self.assertEqual(delete_response.status_code, 302)
+        with self.app.app_context():
+            self.assertIsNone(
+                db.session.get(models.ImageAssets, uploaded_image["id"])
+            )
+            self.assertFalse(image_directory.exists())
+
+    def test_invalid_images_and_unsafe_markdown_are_rejected(self):
+        invalid_response = self.client.post(
+            "/images/upload",
+            data={
+                "upload_session": str(uuid4()),
+                "images": (io.BytesIO(b"not actually an image"), "fake.png"),
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(invalid_response.status_code, 400)
+
+        svg_response = self.client.post(
+            "/images/upload",
+            data={
+                "upload_session": str(uuid4()),
+                "images": (
+                    io.BytesIO(b'<svg xmlns="http://www.w3.org/2000/svg"></svg>'),
+                    "disguised.png",
+                ),
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(svg_response.status_code, 400)
+
+        create_response = self.client.post(
+            "/pages/new",
+            data={
+                "title": "Sanitized Page",
+                "body_markdown": (
+                    "**Safe text**\n\n"
+                    "<script>alert('unsafe')</script>\n\n"
+                    '<img src="https://example.com/tracker.png" onerror="alert(1)">'
+                ),
+            },
+        )
+        self.assertEqual(create_response.status_code, 302)
+        view_response = self.client.get("/pages/view/sanitized-page")
+        self.assertIn(b"<strong>Safe text</strong>", view_response.data)
+        self.assertNotIn(b"<script>alert", view_response.data)
+        self.assertNotIn(b"unsafe", view_response.data)
+        self.assertNotIn(b"onerror", view_response.data)
+        self.assertNotIn(b"tracker.png", view_response.data)
+
+        form_response = self.client.get("/pages/new")
+        self.assertIn(b'id="image-files"', form_response.data)
+        self.assertIn(b'id="image_upload_session"', form_response.data)
+        self.assertIn(b"Insert at Cursor", form_response.data)
+
+    def test_image_upload_limits_and_animation_are_enforced(self):
+        self.app.config["IMAGE_MAX_FILE_BYTES"] = 10
+        oversized_file_response = self.upload_image(str(uuid4()))
+        self.assertEqual(oversized_file_response.status_code, 413)
+        self.app.config["IMAGE_MAX_FILE_BYTES"] = 15 * 1024 * 1024
+
+        self.app.config["IMAGE_MAX_BATCH_BYTES"] = 10
+        oversized_batch_response = self.upload_image(str(uuid4()))
+        self.assertEqual(oversized_batch_response.status_code, 413)
+        self.app.config["IMAGE_MAX_BATCH_BYTES"] = 50 * 1024 * 1024
+
+        self.app.config["IMAGE_MAX_PIXELS"] = 100
+        excessive_pixels_response = self.client.post(
+            "/images/upload",
+            data={
+                "upload_session": str(uuid4()),
+                "images": (
+                    self.make_image_upload(size=(11, 10)),
+                    "too-many-pixels.png",
+                ),
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(excessive_pixels_response.status_code, 400)
+        self.app.config["IMAGE_MAX_PIXELS"] = 40_000_000
+
+        self.app.config["IMAGE_STORAGE_LIMIT_BYTES"] = 1
+        storage_limit_response = self.upload_image(str(uuid4()))
+        self.assertEqual(storage_limit_response.status_code, 400)
+        self.app.config["IMAGE_STORAGE_LIMIT_BYTES"] = 45 * 1024 * 1024 * 1024
+
+        first_frame = Image.new("RGB", (16, 16), (255, 0, 0))
+        second_frame = Image.new("RGB", (16, 16), (0, 0, 255))
+        animated_upload = io.BytesIO()
+        first_frame.save(
+            animated_upload,
+            format="WEBP",
+            save_all=True,
+            append_images=[second_frame],
+            duration=100,
+            loop=0,
+        )
+        first_frame.close()
+        second_frame.close()
+        animated_upload.seek(0)
+        animated_response = self.client.post(
+            "/images/upload",
+            data={
+                "upload_session": str(uuid4()),
+                "images": (animated_upload, "animated.webp"),
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(animated_response.status_code, 400)
+        self.assertIn(b"animated", animated_response.data)
+
+    def test_image_management_requires_a_valid_csrf_token(self):
+        self.app.config["WTF_CSRF_ENABLED"] = True
+        form_response = self.client.get("/pages/new")
+        token_match = re.search(
+            br'name="csrf_token"[^>]*value="([^"]+)"',
+            form_response.data,
+        )
+        self.assertIsNotNone(token_match)
+        csrf_token = token_match.group(1).decode()
+
+        missing_token_response = self.client.post(
+            "/images/upload",
+            data={
+                "upload_session": str(uuid4()),
+                "images": (self.make_image_upload(), "map.png"),
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(missing_token_response.status_code, 400)
+
+        valid_token_response = self.client.post(
+            "/images/upload",
+            data={
+                "csrf_token": csrf_token,
+                "upload_session": str(uuid4()),
+                "images": (self.make_image_upload(), "map.png"),
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(valid_token_response.status_code, 201)
+
+    def test_draft_image_permissions_deletion_and_cleanup(self):
+        upload_session = str(uuid4())
+        upload_response = self.upload_image(upload_session)
+        self.assertEqual(upload_response.status_code, 201)
+        uploaded_image = upload_response.get_json()["images"][0]
+
+        self.login_as(self.other_user_id)
+        session_response = self.client.get(f"/images/session/{upload_session}")
+        self.assertEqual(session_response.status_code, 200)
+        self.assertEqual(session_response.get_json()["images"], [])
+        self.assertEqual(
+            self.client.get(uploaded_image["thumbnail_url"]).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.post(f"/images/{uploaded_image['id']}/delete").status_code,
+            403,
+        )
+        cross_user_attach_response = self.client.post(
+            "/pages/new",
+            data={
+                "image_upload_session": upload_session,
+                "title": "Stolen Draft Image",
+                "body_markdown": (
+                    f"![Not mine]({uploaded_image['display_url']})"
+                ),
+            },
+        )
+        self.assertEqual(cross_user_attach_response.status_code, 200)
+        self.assertIn(b"belongs to a different draft", cross_user_attach_response.data)
+
+        self.login_as(self.user_id)
+        delete_response = self.client.post(
+            f"/images/{uploaded_image['id']}/delete"
+        )
+        self.assertEqual(delete_response.status_code, 200)
+        with self.app.app_context():
+            self.assertIsNone(
+                db.session.get(models.ImageAssets, uploaded_image["id"])
+            )
+
+        old_session = str(uuid4())
+        old_image = self.upload_image(old_session).get_json()["images"][0]
+        with self.app.app_context():
+            from datetime import datetime, timedelta, timezone
+
+            asset = db.session.get(models.ImageAssets, old_image["id"])
+            asset.created_at = datetime.now(timezone.utc) - timedelta(days=31)
+            db.session.commit()
+
+        cleanup_response = self.app.test_cli_runner().invoke(
+            args=["cleanup-images", "--days", "30"]
+        )
+        self.assertEqual(cleanup_response.exit_code, 0)
+        self.assertIn("Removed 1 images.", cleanup_response.output)
+        with self.app.app_context():
+            self.assertIsNone(db.session.get(models.ImageAssets, old_image["id"]))
+
+        orphan_image = self.upload_image(str(uuid4())).get_json()["images"][0]
+        with self.app.app_context():
+            from datetime import datetime, timedelta, timezone
+            from image_service import get_asset_directory
+
+            orphan_directory = get_asset_directory(orphan_image["id"])
+            db.session.delete(
+                db.session.get(models.ImageAssets, orphan_image["id"])
+            )
+            db.session.commit()
+            old_timestamp = (
+                datetime.now(timezone.utc) - timedelta(days=31)
+            ).timestamp()
+            os.utime(orphan_directory, (old_timestamp, old_timestamp))
+
+        orphan_cleanup_response = self.app.test_cli_runner().invoke(
+            args=["cleanup-images", "--days", "30"]
+        )
+        self.assertEqual(orphan_cleanup_response.exit_code, 0)
+        self.assertIn(
+            "Removed 1 orphaned image directories",
+            orphan_cleanup_response.output,
+        )
+        self.assertFalse(orphan_directory.exists())
+
+        storage_response = self.app.test_cli_runner().invoke(
+            args=["image-storage-report"]
+        )
+        self.assertEqual(storage_response.exit_code, 0)
+        self.assertIn(
+            "0 tracked images using 0 bytes; image files use 0 bytes.",
+            storage_response.output,
+        )
+
+        self.login_as(self.admin_id)
+        official_response = self.client.post(
+            "/pages/new",
+            data={
+                "title": "Official Illustrated Guide",
+                "page_type": "official",
+                "body_markdown": "Official content",
+            },
+        )
+        self.assertEqual(official_response.status_code, 302)
+        with self.app.app_context():
+            official_page = models.Pages.query.filter_by(
+                title="Official Illustrated Guide"
+            ).one()
+            official_page_id = official_page.id
+
+        self.login_as(self.user_id)
+        forbidden_upload = self.upload_image(
+            str(uuid4()),
+            page_id=official_page_id,
+        )
+        self.assertEqual(forbidden_upload.status_code, 403)
 
 
 if __name__ == "__main__":

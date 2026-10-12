@@ -3,6 +3,7 @@ from flask_wtf import FlaskForm
 from wtforms import (
     BooleanField,
     FieldList,
+    HiddenField,
     IntegerField,
     SelectField,
     SelectMultipleField,
@@ -14,6 +15,10 @@ from wtforms.validators import DataRequired, Length, Optional, NumberRange
 
 
 class PageCreateForm(FlaskForm):
+    image_upload_session = HiddenField(
+        validators=[Optional(), Length(max=36)],
+    )
+
     title = StringField(
         "Title",
         validators=[DataRequired(), Length(max=200)],

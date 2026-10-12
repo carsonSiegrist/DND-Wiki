@@ -4,7 +4,7 @@ It will by default have only one category, recaps. This will be for session reca
 Other articles will be as players desire, but I'd suggest something like world or faction information.
 
 So, I think this will require user accounts for creating and editing files. I think for recaps I'll limit it to just the author and people that the designate as editors to change files. 
-It'll largely be markdown style editing so that players can have an easy time with limited technical skills doing some formatting. Eventual image support, not sure how I want that to be for the users.
+It'll largely be markdown style editing so that players can have an easy time with limited technical skills doing some formatting. Pages can include multiple user-uploaded images through the page editor.
 
 Then, after the basic wiki is in place, I want to create a shop that is managed through the same website. Maybe a different sublink like shop.campaign.com or something. 
 This way I can just stock a merchant and the players can asynchronously spend their money; this will be an honor system based thing for the actual spending of gold. 
@@ -36,7 +36,7 @@ Categories
 Wiki links
 Permissions
 Recap-specific metadata
-Images
+[x]Images
 Shop
 
 
@@ -123,3 +123,34 @@ page_search (SQLite FTS5 virtual table)
 The search index contains only current page state. It is updated when a page is
 created, edited, restored, or deleted and can be regenerated with the
 `flask rebuild-search-index` command.
+
+image_assets
+- id                  PRIMARY KEY, UUID string
+- page_id             nullable, FK -> pages.id
+- upload_session      NOT NULL, UUID string used to recover unsaved editor uploads
+- uploaded_by         NOT NULL, FK -> users.id
+- original_filename   NOT NULL
+- width               NOT NULL
+- height              NOT NULL
+- master_bytes        NOT NULL
+- display_bytes       NOT NULL
+- thumbnail_bytes     NOT NULL
+- created_at          NOT NULL, defaults to current UTC time
+
+Image files are stored outside the database under `instance/uploads/images`.
+Each upload is normalized to WebP and stored as master (maximum 6000 px),
+display (maximum 2000 px), and thumbnail (maximum 320 px) variants. Draft
+uploads remain private until referenced by a saved page revision.
+
+revision_images
+- revision_id         NOT NULL, FK -> page_revisions.id
+- image_id            NOT NULL, FK -> image_assets.id
+
+PRIMARY KEY (revision_id, image_id)
+
+Revision-image rows preserve images used by historical versions, including
+after a later edit removes an image from the current page. Unattached draft
+uploads can be removed with `flask cleanup-images`; the same command also
+reconciles stale temporary files and on-disk image directories no longer
+tracked by the database. Current storage usage can be inspected with
+`flask image-storage-report`.

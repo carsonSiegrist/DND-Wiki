@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime
+from sqlalchemy import DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column
 from flask_login import UserMixin
 
@@ -263,4 +263,62 @@ class PageLinks(db.Model):
     __table_args__ = (
         db.UniqueConstraint('source_page_id', 'target_title', name='unique_page_link'),
         db.UniqueConstraint('source_page_id', 'target_page_id', name='unique_page_target'),
+    )
+
+
+class ImageAssets(db.Model):
+    __tablename__ = "image_assets"
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+    )
+
+    page_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("pages.id"),
+        nullable=True,
+        index=True,
+    )
+
+    upload_session: Mapped[str] = mapped_column(
+        String(36),
+        nullable=False,
+        index=True,
+    )
+
+    uploaded_by: Mapped[int] = mapped_column(
+        db.ForeignKey("users.id"),
+        nullable=False,
+    )
+
+    original_filename: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+    )
+
+    width: Mapped[int] = mapped_column(nullable=False)
+    height: Mapped[int] = mapped_column(nullable=False)
+    master_bytes: Mapped[int] = mapped_column(nullable=False)
+    display_bytes: Mapped[int] = mapped_column(nullable=False)
+    thumbnail_bytes: Mapped[int] = mapped_column(nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+
+class RevisionImages(db.Model):
+    __tablename__ = "revision_images"
+
+    revision_id: Mapped[int] = mapped_column(
+        db.ForeignKey("page_revisions.id"),
+        primary_key=True,
+    )
+
+    image_id: Mapped[str] = mapped_column(
+        db.ForeignKey("image_assets.id"),
+        primary_key=True,
+        index=True,
     )

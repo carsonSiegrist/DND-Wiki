@@ -2,9 +2,19 @@ import re
 import unicodedata
 from datetime import datetime, timezone
 from html import escape
+from uuid import UUID, uuid4
 
 import markdown
-from flask import abort, Blueprint, flash, redirect, render_template, request, url_for
+from flask import (
+    abort,
+    Blueprint,
+    current_app,
+    flash,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
 from flask_login import current_user, login_required
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
@@ -16,6 +26,13 @@ from forms.pages import (
     DeleteRevisionForm,
     PageCreateForm,
     RestoreRevisionForm,
+)
+from image_service import (
+    ImageValidationError,
+    attach_revision_images,
+    delete_asset_files,
+    delete_page_image_records,
+    sanitize_rendered_html,
 )
 from search import delete_page_search, refresh_page_search
 
@@ -182,6 +199,9 @@ def delete_revision(slug, revision_number):
     revision_title = db.session.get(models.PageRevisionTitles, revision.id)
     if revision_title is not None:
         db.session.delete(revision_title)
+    models.RevisionImages.query.filter_by(revision_id=revision.id).delete(
+        synchronize_session=False
+    )
     db.session.delete(revision)
     db.session.commit()
 
@@ -194,6 +214,7 @@ def delete_revision(slug, revision_number):
 def create_page():
     form = PageCreateForm()
     configure_form(form)
+    ensure_image_upload_session(form)
     prefilled_title = False
 
     if request.method == "GET":
@@ -220,6 +241,9 @@ def create_page():
             try:
                 page = create_new_page(form, page_type)
                 db.session.commit()
+            except ImageValidationError as error:
+                db.session.rollback()
+                form.body_markdown.errors.append(str(error))
             except IntegrityError:
                 db.session.rollback()
                 add_integrity_error(form)
@@ -252,6 +276,7 @@ def edit_page(slug):
 
     form = PageCreateForm()
     configure_form(form)
+    ensure_image_upload_session(form)
 
     if request.method == "GET":
         populate_edit_form(form, page)
@@ -270,6 +295,9 @@ def edit_page(slug):
             try:
                 update_page(page, form, page_type)
                 db.session.commit()
+            except ImageValidationError as error:
+                db.session.rollback()
+                form.body_markdown.errors.append(str(error))
             except IntegrityError:
                 db.session.rollback()
                 add_integrity_error(form)
@@ -290,6 +318,7 @@ def edit_page(slug):
         f"Edit {page.title}",
         get_draft_key(page),
         editing=True,
+        image_page_id=page.id,
     )
 
 
@@ -335,6 +364,7 @@ def delete_page(slug):
             page_id=page.id
         )
     ]
+    image_ids = delete_page_image_records(page.id, revision_ids)
     if revision_ids:
         models.PageRevisionTitles.query.filter(
             models.PageRevisionTitles.revision_id.in_(revision_ids)
@@ -344,6 +374,15 @@ def delete_page(slug):
     )
     db.session.delete(page)
     db.session.commit()
+
+    for image_id in image_ids:
+        try:
+            delete_asset_files(image_id)
+        except OSError:
+            current_app.logger.exception(
+                "Could not remove image files for %s",
+                image_id,
+            )
 
     flash(f'Page "{title}" was permanently deleted.', "success")
     return redirect(url_for("main.index"))
@@ -420,6 +459,7 @@ def render_page_form(
     draft_key,
     editing=False,
     prefilled_title=False,
+    image_page_id=None,
 ):
     return render_template(
         "create_page.html",
@@ -428,7 +468,15 @@ def render_page_form(
         draft_key=draft_key,
         editing=editing,
         prefilled_title=prefilled_title,
+        image_page_id=image_page_id,
     )
+
+
+def ensure_image_upload_session(form):
+    try:
+        UUID(form.image_upload_session.data or "")
+    except (TypeError, ValueError):
+        form.image_upload_session.data = str(uuid4())
 
 
 def get_requested_page_type(form):
@@ -564,7 +612,7 @@ def render_wiki_markdown(body_markdown):
         )
 
     linked_markdown = WIKI_LINK_PATTERN.sub(replace_wiki_link, body_markdown)
-    return markdown.markdown(linked_markdown)
+    return sanitize_rendered_html(markdown.markdown(linked_markdown))
 
 
 def refresh_page_links(page, body_markdown):
@@ -764,6 +812,13 @@ def create_new_page(form, page_type):
         )
     )
     page.current_revision_id = revision.id
+    attach_revision_images(
+        page,
+        revision,
+        revision.body_markdown,
+        form.image_upload_session.data,
+        current_user,
+    )
     set_page_updated_by(page, current_user.id)
     set_page_categories(page, form)
     refresh_page_links(page, revision.body_markdown)
@@ -801,6 +856,13 @@ def update_page(page, form, page_type):
         )
     )
     page.current_revision_id = revision.id
+    attach_revision_images(
+        page,
+        revision,
+        revision.body_markdown,
+        form.image_upload_session.data,
+        current_user,
+    )
     set_page_updated_by(page, current_user.id)
     set_page_categories(page, form)
     refresh_page_links(page, revision.body_markdown)

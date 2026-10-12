@@ -68,3 +68,46 @@
 .notification-dismiss {
     margin-left: auto;
 }
+
+.image-editor {
+    margin-block: 1rem;
+}
+
+.image-editor progress {
+    width: min(100%, 24rem);
+}
+
+.image-cards {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+}
+
+.image-card {
+    border: 1px solid;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.75rem;
+}
+
+.image-card img {
+    height: 10rem;
+    object-fit: contain;
+    width: 100%;
+}
+
+.image-filename {
+    overflow-wrap: anywhere;
+}
+
+.image-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.wiki-page-body img {
+    height: auto;
+    max-width: 100%;
+}

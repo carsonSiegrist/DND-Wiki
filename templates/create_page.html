@@ -77,6 +77,34 @@
             <button type="button" id="add-new-category">New Category</button>
         </p>
 
+        <fieldset class="image-editor">
+            <legend>Images</legend>
+            <p>
+                Upload up to 10 JPEG, PNG, or WebP images at a time (15 MB each,
+                50 MB total). Add alternative text, place the cursor in the page body,
+                and select “Insert at Cursor.”
+                To remove an image from this version, delete its generated Markdown
+                from the page body; historical versions keep their images.
+            </p>
+            <p>
+                <label for="image-files">Choose images</label><br>
+                <input
+                    type="file"
+                    id="image-files"
+                    accept="image/jpeg,image/png,image/webp"
+                    multiple
+                >
+                <button type="button" id="upload-images" disabled>Upload Images</button>
+            </p>
+            <progress id="image-upload-progress" max="100" value="0" hidden>
+                0%
+            </progress>
+            <p id="image-upload-status" role="status" aria-live="polite"></p>
+            <div id="image-cards" class="image-cards" aria-label="Page images">
+                <p id="no-images-message">No images have been uploaded.</p>
+            </div>
+        </fieldset>
+
         <p>
             {{ form.body_markdown.label }}<br>
             {{ form.body_markdown(rows=24, cols=80) }}
@@ -108,8 +136,17 @@
         const sessionFields = document.getElementById("session-number-fields");
         const newCategoryButton = document.getElementById("add-new-category");
         const newCategoryFields = document.getElementById("new-category-fields");
+        const bodyMarkdownField = document.getElementById("body_markdown");
+        const imageUploadSessionField = document.getElementById("image_upload_session");
+        const imageFilesField = document.getElementById("image-files");
+        const uploadImagesButton = document.getElementById("upload-images");
+        const imageUploadProgress = document.getElementById("image-upload-progress");
+        const imageUploadStatus = document.getElementById("image-upload-status");
+        const imageCards = document.getElementById("image-cards");
         const draftKey = {{ draft_key | tojson }};
         const preservePrefilledTitle = {{ prefilled_title | tojson }};
+        const imagePageId = {{ image_page_id | default(none) | tojson }};
+        const imageRecords = new Map();
         let nextCategoryIndex = Number(newCategoryFields.dataset.nextIndex);
 
         function updateRecapFields() {
@@ -176,6 +213,9 @@
                 newCategories: getNewCategoryValues(),
                 bodyMarkdown: form.body_markdown.value,
                 editSummary: editSummaryField ? editSummaryField.value : null,
+                imageUploadSession: imageUploadSessionField
+                    ? imageUploadSessionField.value
+                    : null,
             };
             localStorage.setItem(draftKey, JSON.stringify(draft));
         }
@@ -202,6 +242,9 @@
                 if (editSummaryField) {
                     editSummaryField.value = draft.editSummary || "";
                 }
+                if (imageUploadSessionField && draft.imageUploadSession) {
+                    imageUploadSessionField.value = draft.imageUploadSession;
+                }
 
                 const selectedCategories = new Set(draft.categories || []);
                 form.querySelectorAll('input[name="categories"]').forEach(field => {
@@ -217,8 +260,255 @@
             }
         }
 
+        function setImageStatus(message, isError = false) {
+            imageUploadStatus.textContent = message;
+            imageUploadStatus.classList.toggle("error", isError);
+        }
+
+        function defaultAltText(filename) {
+            return filename.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ");
+        }
+
+        function escapeMarkdownAlt(value) {
+            return value
+                .replace(/\\/g, "\\\\")
+                .replace(/\[/g, "\\[")
+                .replace(/\]/g, "\\]")
+                .replace(/\s+/g, " ")
+                .trim();
+        }
+
+        function insertImageAtCursor(image, altText) {
+            const markdown = `[![${escapeMarkdownAlt(altText)}](${image.display_url})](${image.master_url})`;
+            const selectionStart = bodyMarkdownField.selectionStart;
+            const selectionEnd = bodyMarkdownField.selectionEnd;
+            bodyMarkdownField.setRangeText(
+                markdown,
+                selectionStart,
+                selectionEnd,
+                "end"
+            );
+            bodyMarkdownField.focus();
+            bodyMarkdownField.dispatchEvent(new Event("input", { bubbles: true }));
+            setImageStatus(`Inserted ${image.filename} at the cursor.`);
+        }
+
+        function renderImageCards() {
+            imageCards.replaceChildren();
+
+            if (imageRecords.size === 0) {
+                const emptyMessage = document.createElement("p");
+                emptyMessage.id = "no-images-message";
+                emptyMessage.textContent = "No images have been uploaded.";
+                imageCards.append(emptyMessage);
+                return;
+            }
+
+            imageRecords.forEach(image => {
+                const card = document.createElement("section");
+                card.className = "image-card";
+                card.dataset.imageId = image.id;
+
+                const preview = document.createElement("img");
+                preview.src = image.thumbnail_url;
+                preview.alt = "";
+                preview.loading = "lazy";
+
+                const filename = document.createElement("p");
+                filename.className = "image-filename";
+                filename.textContent = image.filename;
+
+                const altLabel = document.createElement("label");
+                const altId = `image-alt-${image.id}`;
+                altLabel.htmlFor = altId;
+                altLabel.textContent = "Alternative text";
+
+                const altInput = document.createElement("input");
+                altInput.id = altId;
+                altInput.type = "text";
+                altInput.value = defaultAltText(image.filename);
+                altInput.placeholder = "Describe the image";
+
+                const actions = document.createElement("div");
+                actions.className = "image-card-actions";
+
+                const insertButton = document.createElement("button");
+                insertButton.type = "button";
+                insertButton.textContent = "Insert at Cursor";
+                insertButton.addEventListener("click", () => {
+                    insertImageAtCursor(image, altInput.value);
+                });
+                actions.append(insertButton);
+
+                if (!image.attached) {
+                    const deleteButton = document.createElement("button");
+                    deleteButton.type = "button";
+                    deleteButton.textContent = "Delete Upload";
+                    deleteButton.addEventListener("click", () => {
+                        deleteImageUpload(image, deleteButton);
+                    });
+                    actions.append(deleteButton);
+                }
+
+                card.append(
+                    preview,
+                    filename,
+                    altLabel,
+                    altInput,
+                    actions
+                );
+                imageCards.append(card);
+            });
+        }
+
+        function addImageRecords(images, replace = false) {
+            if (replace) {
+                imageRecords.clear();
+            }
+            images.forEach(image => imageRecords.set(image.id, image));
+            renderImageCards();
+        }
+
+        function selectedImages() {
+            return Array.from(imageFilesField.files || []);
+        }
+
+        function updateUploadButton() {
+            const files = selectedImages();
+            uploadImagesButton.disabled = files.length === 0 || files.length > 10;
+            if (files.length > 10) {
+                setImageStatus("Choose no more than 10 images at a time.", true);
+            }
+        }
+
+        function csrfToken() {
+            const field = form.querySelector('[name="csrf_token"]');
+            return field ? field.value : "";
+        }
+
+        async function loadSessionImages() {
+            if (!imageUploadSessionField || !imageUploadSessionField.value) {
+                return;
+            }
+
+            const parameters = new URLSearchParams();
+            if (imagePageId !== null) {
+                parameters.set("page_id", imagePageId);
+            }
+            const suffix = parameters.toString() ? `?${parameters}` : "";
+
+            try {
+                const response = await fetch(
+                    `/images/session/${encodeURIComponent(imageUploadSessionField.value)}${suffix}`
+                );
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || "Images could not be loaded.");
+                }
+                addImageRecords(data.images || [], true);
+            } catch (error) {
+                setImageStatus(error.message || "Images could not be loaded.", true);
+            }
+        }
+
+        function uploadImages() {
+            const files = selectedImages();
+            if (files.length === 0 || files.length > 10 || !imageUploadSessionField) {
+                updateUploadButton();
+                return;
+            }
+
+            const uploadData = new FormData();
+            uploadData.append("csrf_token", csrfToken());
+            uploadData.append("upload_session", imageUploadSessionField.value);
+            if (imagePageId !== null) {
+                uploadData.append("page_id", imagePageId);
+            }
+            files.forEach(file => uploadData.append("images", file));
+
+            const request = new XMLHttpRequest();
+            request.open("POST", "/images/upload");
+            uploadImagesButton.disabled = true;
+            imageFilesField.disabled = true;
+            imageUploadProgress.hidden = false;
+            imageUploadProgress.value = 0;
+            setImageStatus("Uploading images…");
+
+            request.upload.addEventListener("progress", event => {
+                if (event.lengthComputable) {
+                    imageUploadProgress.value = Math.round(
+                        (event.loaded / event.total) * 100
+                    );
+                }
+            });
+            request.addEventListener("load", () => {
+                let data;
+                try {
+                    data = JSON.parse(request.responseText);
+                } catch (error) {
+                    data = {};
+                }
+
+                if (request.status < 200 || request.status >= 300) {
+                    setImageStatus(
+                        data.error || "The images could not be uploaded.",
+                        true
+                    );
+                } else {
+                    const images = data.images || [];
+                    addImageRecords(images);
+                    imageFilesField.value = "";
+                    const errors = data.errors || [];
+                    const successMessage = `${images.length} image${images.length === 1 ? "" : "s"} uploaded.`;
+                    setImageStatus(
+                        errors.length ? `${successMessage} ${errors.join(" ")}` : successMessage,
+                        errors.length > 0
+                    );
+                    saveDraft();
+                }
+            });
+            request.addEventListener("error", () => {
+                setImageStatus("The upload was interrupted. Try again.", true);
+            });
+            request.addEventListener("loadend", () => {
+                imageFilesField.disabled = false;
+                imageUploadProgress.hidden = true;
+                updateUploadButton();
+            });
+            request.send(uploadData);
+        }
+
+        async function deleteImageUpload(image, button) {
+            button.disabled = true;
+            const deleteData = new FormData();
+            deleteData.append("csrf_token", csrfToken());
+
+            try {
+                const response = await fetch(`/images/${encodeURIComponent(image.id)}/delete`, {
+                    method: "POST",
+                    body: deleteData,
+                });
+                let data = {};
+                try {
+                    data = await response.json();
+                } catch (error) {
+                    // A successful deletion does not require a response body.
+                }
+                if (!response.ok) {
+                    throw new Error(data.error || "The upload could not be deleted.");
+                }
+                imageRecords.delete(image.id);
+                renderImageCards();
+                setImageStatus(`${image.filename} was deleted.`);
+            } catch (error) {
+                button.disabled = false;
+                setImageStatus(error.message || "The upload could not be deleted.", true);
+            }
+        }
+
         restoreDraft();
         updateRecapFields();
+        loadSessionImages();
 
         if (recapCheckbox) {
             recapCheckbox.addEventListener("change", updateRecapFields);
@@ -235,6 +525,13 @@
                 saveDraft();
             }
         });
+        imageFilesField.addEventListener("change", () => {
+            if (selectedImages().length <= 10) {
+                setImageStatus("");
+            }
+            updateUploadButton();
+        });
+        uploadImagesButton.addEventListener("click", uploadImages);
         form.addEventListener("input", saveDraft);
         form.addEventListener("change", saveDraft);
         form.addEventListener("submit", saveDraft);
