@@ -27,6 +27,7 @@ def create_password_reset(username, valid_minutes=DEFAULT_RESET_MINUTES):
     user = models.User.query.filter_by(username=username).first()
     if user is None:
         raise LookupError(f'User "{username}" was not found.')
+    reset_username = user.username
 
     now = datetime.now(timezone.utc)
     models.PasswordResetTokens.query.filter_by(
@@ -54,4 +55,4 @@ def create_password_reset(username, valid_minutes=DEFAULT_RESET_MINUTES):
         )
     )
     db.session.commit()
-    return reset_token, user, expires_at
+    return reset_token, reset_username, expires_at

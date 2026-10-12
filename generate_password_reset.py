@@ -32,7 +32,7 @@ def main():
     args = parse_args()
     with app.app_context():
         try:
-            reset_token, user, expires_at = create_password_reset(
+            reset_token, reset_username, expires_at = create_password_reset(
                 args.username,
                 args.minutes,
             )
@@ -42,7 +42,7 @@ def main():
     reset_url = (
         f"{args.base_url.rstrip('/')}/auth/reset-password/{reset_token}"
     )
-    print(f'Generated a one-time password reset for "{user.username}".')
+    print(f'Generated a one-time password reset for "{reset_username}".')
     print(f"It expires at {expires_at.isoformat()}.")
     print("This URL will not be shown again:")
     print(reset_url)

@@ -1019,8 +1019,12 @@ class PageCreationTestCase(unittest.TestCase):
 
     def test_password_reset_is_one_time_and_revokes_existing_sessions(self):
         with self.app.app_context():
-            first_token, _, _ = create_password_reset("page-author", 60)
-            reset_token, _, _ = create_password_reset("page-author", 60)
+            first_token, first_username, _ = create_password_reset(
+                "page-author", 60
+            )
+            reset_token, reset_username, _ = create_password_reset(
+                "page-author", 60
+            )
             first_record = models.PasswordResetTokens.query.filter_by(
                 token_hash=hash_reset_token(first_token)
             ).one()
@@ -1033,6 +1037,11 @@ class PageCreationTestCase(unittest.TestCase):
                     for record in models.PasswordResetTokens.query.all()
                 },
             )
+
+        # The command prints this after its application context has closed, so
+        # it must be a plain value rather than a detached SQLAlchemy model.
+        self.assertEqual(first_username, "page-author")
+        self.assertEqual(reset_username, "page-author")
 
         reset_client = self.app.test_client()
         form_response = reset_client.get(
