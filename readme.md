@@ -1,110 +1,188 @@
 # Campaign Wiki
 
-A player-driven wiki for an upcoming Dungeons & Dragons (D&D) West Marches-style campaign. 
+A small, player-driven Dungeons & Dragons campaign wiki. Players can create and
+edit articles and session recaps, link pages together, organize them into
+categories, upload images, search the current wiki, and inspect or restore full
+page revisions. Administrators can additionally maintain official pages,
+categories, revisions, and user roles.
 
-The goal of this project is to provide a simple, easy to navigate place where players can document the campaign as it develops. Rather than maintaining a GM-authored encyclopedia, this wiki is intended to grow organically through player contributions, session recaps, discoveries, faction notes, world information, and anything else the players find useful.
+## Features
 
+- Invite-only user registration with one-time keys
+- Administrator-issued, one-time password-reset links
+- Article, recap, and administrator-controlled official page types
+- Complete revision snapshots of title, body, page type, session number,
+  categories, and referenced images
+- Historical revision viewing, restoration, and administrator deletion
+- `[[Wiki Link]]` syntax with stable ID-based resolved links and wanted pages
+- Multiple categories per page, with administrator rename/delete controls
+- SQLite FTS5 search with title-weighted results and contextual highlighting
+- Multiple-image uploads with master, display, and thumbnail WebP variants
+- Browser-local draft recovery for page forms
+- Per-client or per-user rate limits on sensitive and expensive routes
 
-## Goals
+## Requirements
 
-- Keep campaign knowledge player created and maintained
-- Make creating and editing pages approachable for players with limited technical experience 
-- Use Markdown-style formatting for simple but flexible page content
-- Make information easy to browse and navigate
-- Preserve a useful history of page edits and campaign discoveries
-- Avoid requiring the GM to maintain wiki content manually
+- Python 3.12 or newer
+- SQLite with FTS5 support
+- Writable storage for the SQLite database and `instance/uploads`
 
-## Session Recaps
+Install dependencies in a virtual environment:
 
-The wiki will have one built-in category: **Recaps**.
+```bash
+python -m venv venv
+venv/bin/pip install -r requirements.txt
+```
 
-Recap pages will be the only mandatory entry by the players. They are intended to document individual game sessions of the campaign. Each recap will require a session number, while the title itself can remain flexible. 
+## Configuration
 
-For example, players could create titles such as:
+Create a `.env` file in the project directory:
 
-- `Into the Sunken Temple` 
-- `The Goblin Incident`
-- `Expedition Beyond the Bog`
+```dotenv
+SECRET_KEY=replace-with-a-long-random-value
+DATABASE_URL=sqlite:///instance/dndwiki.db
+```
 
-while each page seperately records the campaign session it represents, allowing for chronological navigation. 
+Both values are required. The application exits with a clear error if either
+is absent or blank. The `.env` file and the `instance` directory are ignored by
+Git.
 
+`RATELIMIT_STORAGE_URI` is optional and defaults to `memory://`. That is
+appropriate for the intended single-process deployment. Configure a shared
+backend such as Redis before running multiple application processes.
 
-## Player Created Pages & Categories 
+`WIKI_BASE_URL` is optional and controls the public URL printed by the password
+reset script. It defaults to `http://localhost:5000` and should be set to the
+HTTPS production origin.
 
-Outside of recaps, players will be free to create pages & categories as they see fit.
+## Database setup and migrations
 
-Possible topcis include:
+The database is managed by Flask-Migrate/Alembic. Do not use `db.create_all()`
+for a deployed database.
 
-- Locations
-- Factions
-- NPCs
-- Dungeons
-- Regions
-- Historical Events
-- Rumors
-- Discoveries
-- Campaign theories
-- Player Character (PC) information
+For a new installation, and after pulling future schema changes:
 
+```bash
+venv/bin/flask db upgrade
+```
 
-## User Accounts
+The first migration creates the original schema and its SQLite FTS5 table. The
+second adds invite keys and complete revision snapshots; a compatibility
+migration aligns indexes and constraints in older `create_all()` databases.
 
-Users will need accounts in order to create or edit wiki pages. 
+For a database created before migrations were introduced, make a backup and
+mark it as the baseline before upgrading:
 
-Accounts allow edits to be associated with their authors, and provide a foundation for page permissions and revision history.
+```bash
+cp instance/dndwiki.db instance/dndwiki.before-migrations.bak
+venv/bin/flask db stamp b32dc03a3054
+venv/bin/flask db upgrade
+```
 
-## Page Editing
+Only use `stamp` for an existing, unversioned database that already has the
+baseline tables. A fresh database should use `flask db upgrade` alone.
 
-Pages will primarily use markdown for their content.
+## Inviting users
 
-Markdown provides enough formatting for useful wiki pages without requiring players to learn HTML or use a complicated editor. Eventually, the editor will provide guidance or controls so that players entirely unfamiliar with markdown can still comfortably and easily create pages. 
+Generate one or more registration keys:
 
-## Page Links
+```bash
+venv/bin/python generate_invite.py
+venv/bin/python generate_invite.py --count 5
+```
 
-Wiki pages can ink to other pages by title. They will be created with the following format: `[[Target Page Title]]`.
+Each plaintext key is displayed once. Only a SHA-256 hash is stored. A key is
+atomically marked used when its account is created and cannot register another
+account.
 
-Links may point to pages that do not yet exist. This allows players to reference discovered people, locations, factions, or concepts before someone has written an article about them. 
-Once the target page is created, those links can automatically resolve to the new page. 
-This should allow the wiki to easily grow organically, rather than requiring pages to be created in a particular order. 
+To promote a registered account to administrator:
 
-This will also allow for a "Most Wanted Pages" feature on the main page, indicating which pages are referenced by the most articles that have yet to be created. 
+```bash
+venv/bin/python manage_user_role.py USERNAME admin
+```
 
-## Revision History
+Use `user` instead of `admin` to remove administrator privileges.
 
-Page edits will be stored as revisions rather than replacing the previsou version. Each revision will contain information such as:
+## Running locally
 
-- Author
-- Creation datetime
-- Markdown content
-- Edit summary
-- Revision number
+After applying migrations:
 
-Revision history will make it possible to inspect a page's history and restoration of older versions. 
+```bash
+venv/bin/flask run
+```
 
-## Project Status
+The development server is not intended for internet-facing deployment. Use a
+production WSGI server behind HTTPS and never expose Flask debug mode.
 
-This project is currently in early development.
+## Rate limits
 
-The initial focus is on the core wiki functionality:
-- User accounts
-- Page creation
-- Markdown editing
-- Page linking
-- Session recaps
-- Revision history
-- Editing permissions
-- Basic navigation and search
+Rate limits use the authenticated user ID when available and otherwise the
+client IP address:
 
-Addition features will be added as the needs of the campaign become clearer.
+- Login: 10 attempts/minute and 50/hour
+- Registration: 5 attempts/hour
+- Page creation: 60/hour
+- Page editing: 120/hour
+- Image upload requests: 60/hour
+- Search: 120/minute
+- Password-reset links: 20 requests/hour, including at most 5 submissions/hour
 
-## Design Philosophies
+If the application is behind a reverse proxy, configure the deployment so
+Flask receives the real client address from that trusted proxy. Otherwise,
+anonymous users may share the proxy's rate-limit bucket.
 
-The design philosophies of this wiki are heavily inspired by the design philosophies of the west marches style of play. 
+## Maintenance and backups
 
-This wiki is not intended to be a complete canonical encyclopedia maintained by the GM.
+The database and image directory form one logical backup set:
 
-It is meant to represent the campaign as the players experience and record it.
+- `instance/dndwiki.db`
+- `instance/uploads/images`
 
-Information may be incomplete, speculative, outdated, or written from a particular character's perspective. That is part of the intended experience.
+Back them up together and periodically test a restoration. Always take a
+database backup before schema upgrades.
 
-The wiki should become a shared record of exploration: what the players have discovered, what they believe, what they consider important, and how their understanding of the campaign world changes over time.
+Useful maintenance commands:
+
+```bash
+venv/bin/flask cleanup-images --days 30
+venv/bin/flask image-storage-report
+venv/bin/flask rebuild-search-index
+```
+
+Schedule image cleanup periodically. The storage report includes both tracked
+database usage and files present on disk.
+
+## Testing
+
+```bash
+venv/bin/python -m unittest -q
+venv/bin/pip check
+venv/bin/flask db check
+```
+
+Tests use isolated in-memory databases and temporary image directories.
+
+## Password resets
+
+Generate a one-time reset URL for a user:
+
+```bash
+venv/bin/python generate_password_reset.py USERNAME
+```
+
+The default lifetime is 60 minutes. It can be changed per link, and the public
+base URL can be supplied directly if `WIKI_BASE_URL` is not configured:
+
+```bash
+venv/bin/python generate_password_reset.py USERNAME \
+  --minutes 30 \
+  --base-url https://wiki.example.com
+```
+
+Only the token hash is stored. Creating another link invalidates earlier unused
+links for that user. The user chooses and confirms the new password in their
+browser; the administrator never sees it. A successful reset consumes the link
+and revokes every existing login session for that account.
+
+The migration that introduces session revocation also logs out sessions created
+by older versions of the wiki once; users can immediately log back in.

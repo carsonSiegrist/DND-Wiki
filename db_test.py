@@ -108,6 +108,8 @@ with app.app_context():
             author_id=user.id,
             body_markdown="This is a test page revision.",
             edit_summary="Initial revision.",
+            page_type="recap",
+            session_number=1,
             revision_number=1
         )
         db.session.add(page_revision)
@@ -135,6 +137,8 @@ with app.app_context():
                 author_id=user.id,
                 body_markdown="This is a duplicate test page revision.",
                 edit_summary="Duplicate revision.",
+                page_type="recap",
+                session_number=1,
                 revision_number=1  # Same revision number as the previous one
             )
             db.session.add(duplicate_revision)

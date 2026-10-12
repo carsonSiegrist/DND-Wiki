@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 
-{% block title %}D&amp;D Wiki - {{ display_title }}{% if page.page_type == "recap" %} -- Session {{ page.session_number }} Recap{% endif %}{% endblock %}
+{% block title %}D&amp;D Wiki - {{ display_title }}{% if display_page_type == "recap" %} -- Session {{ display_session_number }} Recap{% endif %}{% endblock %}
 {% block header_class %}title{% endblock %}
-{% block header %}{{ display_title }}{% if page.page_type == "recap" %} -- Session {{ page.session_number }} Recap{% endif %}{% endblock %}
+{% block header %}{{ display_title }}{% if display_page_type == "recap" %} -- Session {{ display_session_number }} Recap{% endif %}{% endblock %}
 
 {% block header_details %}
     <p class="page-metadata">
@@ -17,7 +17,7 @@
         <span>
             Categories:
             {% for category in page_metadata.categories %}
-                <a href="{{ url_for('main.view_category', slug=category.slug) }}">{{ category.name }}</a>{% if not loop.last %}, {% endif %}
+                {% if category.slug %}<a href="{{ url_for('main.view_category', slug=category.slug) }}">{{ category.name }}</a>{% else %}{{ category.name }}{% endif %}{% if not loop.last %}, {% endif %}
             {% else %}
                 None
             {% endfor %}

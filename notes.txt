@@ -1,56 +1,79 @@
-wiki for my upcoming D&D campaign. 
-I want the wiki to be entirely player-driven, and easy to navigate.
-It will by default have only one category, recaps. This will be for session recaps. I was considering forcing a title like "Session X", but I think I'll just make session number a mandatory field. 
-Other articles will be as players desire, but I'd suggest something like world or faction information.
+Campaign Wiki project notes
+===========================
 
-So, I think this will require user accounts for creating and editing files. I think for recaps I'll limit it to just the author and people that the designate as editors to change files. 
-It'll largely be markdown style editing so that players can have an easy time with limited technical skills doing some formatting. Pages can include multiple user-uploaded images through the page editor.
+Purpose
+-------
 
-Then, after the basic wiki is in place, I want to create a shop that is managed through the same website. Maybe a different sublink like shop.campaign.com or something. 
-This way I can just stock a merchant and the players can asynchronously spend their money; this will be an honor system based thing for the actual spending of gold. 
-For players selling items for gold, I'll have a basic list of many common items, then maybe a form for players to submit a sell ticket. It'll be something like <item> <quantity> <cost/unit> 
-If I approve it, that will add it to the items table as something that can be sold at that price. 
-If I reject it, it should somehow notify the player that it was rejected, and optionally that a lower price would be paid. 
-All of the shopping will have in-depth logs. 
+This is a small, player-driven D&D campaign wiki. It is intended to grow from
+player recaps, discoveries, factions, locations, theories, and other campaign
+knowledge. Regular articles and recaps are editable by registered users.
+Official pages are readable by everyone but can only be created, edited,
+restored, or deleted by administrators.
 
+The campaign shop described in early planning remains a separate future
+project and is not part of the completed wiki.
 
-So technical side of things: 
+Current feature status
+----------------------
 
-Wikipages should be stored in a DB, retrieved as they are accessed. 
+[x] Invite-only users/authentication
+[x] User/admin roles and role-management script
+[x] Page creation and editing
+[x] Article, recap, and official page types
+[x] Complete page-revision snapshots and restoration
+[x] Markdown rendering with HTML sanitization
+[x] Stable wiki links, aliases, and unresolved links
+[x] Page search
+[x] Categories and administrator category management
+[x] Recap-specific session metadata
+[x] Multiple user-uploaded images with revision history
+[x] All Pages, category indexes, Most Wanted, and recent activity
+[x] Browser-local draft recovery
+[x] Database migrations
+[x] Route rate limits
+[x] Administrator-issued password-reset flow and session revocation
+[ ] Campaign shop (separate future scope)
 
-Main page should have something like a list of categories somewhere, maybe a list of recent articles, and a sign in page (this should be on a universal header) and a blurb for what the wiki is for. 
-
-Caregories should be creatable by anyone; removeable/editable by moderators only. 
-
-Pages should be created under a category; editable by anyone. Edit history also viewable by anyone. 
-
-So the plan is: 
-
-[x]Users/auth
-[x]Pages + revisions
-[x]Markdown rendering
-Page creation (partway done - WIP, all but frontend I think. Idk, I made some progress, nothing tested.)
-Page editing 
-Page browsing/search
-Categories
-Wiki links
 Permissions
-Recap-specific metadata
-[x]Images
-Shop
+-----------
 
+- Anonymous visitors can read pages, revisions, categories, search results,
+  and referenced images.
+- Registration requires an unused one-time invite key.
+- Regular users can create and edit articles and recaps and restore their
+  non-official revisions.
+- Administrators can additionally create/edit official pages, restore official
+  snapshots, permanently delete pages or old revisions, and rename/delete
+  categories.
+- Category deletion removes the live association but preserves its historical
+  label inside revision snapshots.
 
-
-----------------------------------
-Database core schema 
+Database schema
+---------------
 
 users
 - id                  PRIMARY KEY
 - username            NOT NULL, UNIQUE
 - email               NOT NULL, UNIQUE
 - password_hash       NOT NULL
-- role                NOT NULL, defaults to "user" (supported values: "user", "admin")
-- created_at          NOT NULL, defaults to current UTC time
+- role                NOT NULL, defaults to "user"; "user" or "admin"
+- created_at           NOT NULL, UTC
+- session_version      NOT NULL, increments to revoke existing sessions
+
+invite_keys
+- id                  PRIMARY KEY
+- key_hash            NOT NULL, UNIQUE, SHA-256 of plaintext key
+- created_at           NOT NULL, UTC
+- used_at              nullable
+- used_by              nullable, FK -> users.id
+
+password_reset_tokens
+- id                  PRIMARY KEY
+- user_id             NOT NULL, FK -> users.id
+- token_hash          NOT NULL, UNIQUE, SHA-256 of plaintext token
+- created_at           NOT NULL, UTC
+- expires_at           NOT NULL, UTC
+- used_at              nullable
 
 categories
 - id                  PRIMARY KEY
@@ -58,99 +81,115 @@ categories
 - slug                NOT NULL, UNIQUE
 - description         nullable
 - created_by          NOT NULL, FK -> users.id
-- created_at          NOT NULL, defaults to current UTC time
+- created_at           NOT NULL, UTC
 
 pages
 - id                  PRIMARY KEY
 - title               NOT NULL, UNIQUE
 - slug                NOT NULL, UNIQUE
-- page_type           NOT NULL (supported values: "article", "recap", "official")
+- page_type           NOT NULL: article, recap, or official
 - created_by          NOT NULL, FK -> users.id
-- created_at          NOT NULL, defaults to current UTC time
-- updated_at          nullable, defaults to current UTC time and changes on update
-- session_number      nullable
+- created_at           NOT NULL, UTC
+- updated_at           nullable, UTC
+- session_number      nullable; required by application for recaps
 - current_revision_id nullable, FK -> page_revisions.id
-
-page_title_aliases
-- id                  PRIMARY KEY
-- page_id             nullable, FK -> pages.id
-- title               NOT NULL, UNIQUE
-- created_at          NOT NULL, defaults to current UTC time
-
-Historical titles remain reserved while their page exists. Permanently
-deleting a page removes all of its title aliases so its current and historical
-titles can be used by newly created pages.
-
-page_update_authors
-- page_id             PRIMARY KEY, FK -> pages.id
-- user_id             NOT NULL, FK -> users.id
-
-page_categories
-- page_id             NOT NULL, FK -> pages.id
-- category_id         NOT NULL, FK -> categories.id
-
-PRIMARY KEY (page_id, category_id)
 
 page_revisions
 - id                  PRIMARY KEY
 - page_id             NOT NULL, FK -> pages.id
 - author_id           NOT NULL, FK -> users.id
 - body_markdown       NOT NULL
-- created_at          NOT NULL, defaults to current UTC time
+- created_at           NOT NULL, UTC
 - edit_summary        nullable
+- page_type           NOT NULL; snapshot value
+- session_number      nullable; snapshot value
 - revision_number     NOT NULL
-
-UNIQUE (page_id, revision_number)
+- UNIQUE (page_id, revision_number)
 
 page_revision_titles
 - revision_id         PRIMARY KEY, FK -> page_revisions.id
-- title               NOT NULL
+- title               NOT NULL; snapshot value
+
+page_revision_categories
+- id                  PRIMARY KEY
+- revision_id         NOT NULL, FK -> page_revisions.id
+- category_id         nullable, FK -> categories.id
+- category_name       NOT NULL; immutable snapshot label
+- UNIQUE (revision_id, category_name)
+
+page_categories
+- page_id             NOT NULL, FK -> pages.id
+- category_id         NOT NULL, FK -> categories.id
+- PRIMARY KEY (page_id, category_id)
+
+page_title_aliases
+- id                  PRIMARY KEY
+- page_id             nullable, FK -> pages.id
+- title               NOT NULL, UNIQUE
+- created_at           NOT NULL, UTC
+
+Historical titles stay reserved while their page exists. Permanently deleting
+a page removes its aliases so those titles can be reused.
+
+page_update_authors
+- page_id             PRIMARY KEY, FK -> pages.id
+- user_id             NOT NULL, FK -> users.id
 
 page_links
 - id                  PRIMARY KEY
 - source_page_id      NOT NULL, FK -> pages.id
 - target_page_id      nullable, FK -> pages.id
 - target_title        NOT NULL
-
-UNIQUE (source_page_id, target_title)
-UNIQUE (source_page_id, target_page_id)
+- UNIQUE (source_page_id, target_title)
+- UNIQUE (source_page_id, target_page_id)
 
 page_search (SQLite FTS5 virtual table)
-- page_id             unindexed, references the current page logically
-- title               searchable current page title
-- body                searchable plain-text current revision body
-
-The search index contains only current page state. It is updated when a page is
-created, edited, restored, or deleted and can be regenerated with the
-`flask rebuild-search-index` command.
+- page_id             unindexed logical reference
+- title               current searchable title
+- body                current searchable plain-text body
 
 image_assets
 - id                  PRIMARY KEY, UUID string
 - page_id             nullable, FK -> pages.id
-- upload_session      NOT NULL, UUID string used to recover unsaved editor uploads
+- upload_session      NOT NULL, UUID draft identifier
 - uploaded_by         NOT NULL, FK -> users.id
 - original_filename   NOT NULL
-- width               NOT NULL
-- height              NOT NULL
-- master_bytes        NOT NULL
-- display_bytes       NOT NULL
-- thumbnail_bytes     NOT NULL
-- created_at          NOT NULL, defaults to current UTC time
-
-Image files are stored outside the database under `instance/uploads/images`.
-Each upload is normalized to WebP and stored as master (maximum 6000 px),
-display (maximum 2000 px), and thumbnail (maximum 320 px) variants. Draft
-uploads remain private until referenced by a saved page revision.
+- width/height         NOT NULL
+- master/display/thumbnail byte counts NOT NULL
+- created_at           NOT NULL, UTC
 
 revision_images
 - revision_id         NOT NULL, FK -> page_revisions.id
 - image_id            NOT NULL, FK -> image_assets.id
+- PRIMARY KEY (revision_id, image_id)
 
-PRIMARY KEY (revision_id, image_id)
+Image files live below instance/uploads/images. JPEG, PNG, and WebP uploads are
+normalized into master (maximum 6000 px), display (maximum 2000 px), and
+thumbnail (maximum 320 px) WebP variants. Historical associations keep images
+used by old revisions available.
 
-Revision-image rows preserve images used by historical versions, including
-after a later edit removes an image from the current page. Unattached draft
-uploads can be removed with `flask cleanup-images`; the same command also
-reconciles stale temporary files and on-disk image directories no longer
-tracked by the database. Current storage usage can be inspected with
-`flask image-storage-report`.
+Operations
+----------
+
+- Apply schema changes with `flask db upgrade`.
+- Generate invites with `python generate_invite.py [--count N]`.
+- Generate reset links with `python generate_password_reset.py USERNAME`.
+- Change roles with `python manage_user_role.py USERNAME user|admin`.
+- Rebuild current search data with `flask rebuild-search-index`.
+- Remove abandoned images with `flask cleanup-images --days 30`.
+- Inspect image storage with `flask image-storage-report`.
+- Back up both the SQLite database and instance/uploads together.
+
+Password resets
+---------------
+
+An administrator runs `python generate_password_reset.py USERNAME` and sends
+the printed URL privately to that user. The default lifetime is 60 minutes;
+`--minutes` accepts 5-1440. `--base-url` or the `WIKI_BASE_URL` environment
+variable controls the public origin in the printed link.
+
+Only a SHA-256 token hash is stored. Issuing a new link consumes all earlier
+unused links for the account. The reset form uses the same password policy as
+registration, returns a generic response for invalid/expired/used links, and
+atomically commits the password and token use. A successful reset increments
+the user's session version, invalidating all existing login cookies.

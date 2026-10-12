@@ -11,7 +11,7 @@ from werkzeug.exceptions import RequestEntityTooLarge
 from wtforms.validators import ValidationError
 
 import models
-from extensions import db
+from extensions import db, limiter
 from image_service import (
     ImageValidationError,
     delete_asset_files,
@@ -114,6 +114,7 @@ def upload_too_large(_error_value):
 
 @images_bp.route("/upload", methods=["POST"])
 @login_required
+@limiter.limit("60 per hour")
 def upload_images():
     try:
         _validate_request_csrf()

@@ -8,6 +8,14 @@
         {{ form.hidden_tag() }}
 
         <p>
+            {{ form.invite_key.label }}<br>
+            {{ form.invite_key(autocomplete="one-time-code") }}
+            {% for error in form.invite_key.errors %}
+                <br><span class="error">{{ error }}</span>
+            {% endfor %}
+        </p>
+
+        <p>
             {{ form.username.label }}<br>
             {{ form.username() }}
             {% for error in form.username.errors %}

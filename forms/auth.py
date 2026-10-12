@@ -4,6 +4,14 @@ from wtforms.validators import DataRequired, Email, EqualTo, Length, ValidationE
 import models
 
 class RegisterForm(FlaskForm):
+    invite_key = PasswordField(
+        "Invite Key",
+        validators=[
+            DataRequired(message="A valid invite key is required."),
+            Length(max=200),
+        ],
+    )
+
     username = StringField(
         "Username",
         validators=[
@@ -71,3 +79,23 @@ class LoginForm(FlaskForm):
 
 
     submit = SubmitField("Submit")
+
+
+class ResetPasswordForm(FlaskForm):
+    password = PasswordField(
+        "New Password",
+        validators=[
+            DataRequired(message="A new password is required."),
+            Length(min=10, message="Password must be at least 10 characters long."),
+        ],
+    )
+
+    password_check = PasswordField(
+        "Confirm New Password",
+        validators=[
+            DataRequired(message="Password confirmation is required."),
+            EqualTo("password", message="Passwords must match."),
+        ],
+    )
+
+    submit = SubmitField("Set New Password")

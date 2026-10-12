@@ -7,7 +7,7 @@ import click
 from dotenv import load_dotenv
 from flask import Flask
 
-from extensions import db, login_manager
+from extensions import db, limiter, login_manager, migrate
 
 load_dotenv()
 
@@ -27,14 +27,23 @@ def create_app(test_config=None):
     app.config["IMAGE_MAX_PIXELS"] = 40_000_000
     app.config["IMAGE_STORAGE_LIMIT_BYTES"] = 45 * 1024 * 1024 * 1024
     app.config["MAX_CONTENT_LENGTH"] = 51 * 1024 * 1024
+    app.config["RATELIMIT_STORAGE_URI"] = os.getenv(
+        "RATELIMIT_STORAGE_URI",
+        "memory://",
+    )
+    app.config["RATELIMIT_HEADERS_ENABLED"] = True
 
     if test_config is not None:
         app.config.update(test_config)
 
+    validate_required_config(app)
+
     db.init_app(app)
     login_manager.init_app(app)
+    migrate.init_app(app, db, render_as_batch=True)
+    limiter.init_app(app)
 
-    # Import models so SQLAlchemy knows about them before create_all().
+    # Import models so SQLAlchemy and migrations know about them.
     import models
 
     # Blueprints: 
@@ -47,12 +56,6 @@ def create_app(test_config=None):
     app.register_blueprint(auth_bp)
     app.register_blueprint(images_bp)
     app.register_blueprint(pages_bp)
-
-    with app.app_context():
-        from search import initialize_search_index
-
-        db.create_all()
-        initialize_search_index()
 
     @app.cli.command("rebuild-search-index")
     def rebuild_search_index_command():
@@ -147,8 +150,22 @@ def create_app(test_config=None):
     return app
 
 
+def validate_required_config(app):
+    missing_settings = [
+        setting
+        for setting in ("SECRET_KEY", "SQLALCHEMY_DATABASE_URI")
+        if not str(app.config.get(setting) or "").strip()
+    ]
+    if missing_settings:
+        names = ", ".join(missing_settings)
+        raise RuntimeError(
+            f"Missing required application configuration: {names}. "
+            "Set SECRET_KEY and DATABASE_URL before starting the wiki."
+        )
+
+
 app = create_app()
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run()

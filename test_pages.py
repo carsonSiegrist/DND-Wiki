@@ -3,6 +3,7 @@ import os
 import re
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from PIL import Image
@@ -10,8 +11,11 @@ from sqlalchemy import text
 
 from app import create_app
 from extensions import db
+from generate_invite import create_invite_keys
+from invites import hash_invite_key
 from manage_user_role import update_user_role
 import models
+from password_resets import create_password_reset, hash_reset_token
 
 
 class PageCreationTestCase(unittest.TestCase):
@@ -23,6 +27,7 @@ class PageCreationTestCase(unittest.TestCase):
                 "SECRET_KEY": "test-secret",
                 "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:",
                 "WTF_CSRF_ENABLED": False,
+                "RATELIMIT_ENABLED": False,
                 "IMAGE_UPLOAD_ROOT": self.upload_directory.name,
             }
         )
@@ -30,6 +35,9 @@ class PageCreationTestCase(unittest.TestCase):
 
         with self.app.app_context():
             db.create_all()
+            from search import initialize_search_index
+
+            initialize_search_index()
 
             user = models.User(
                 username="page-author",
@@ -85,9 +93,11 @@ class PageCreationTestCase(unittest.TestCase):
         self.upload_directory.cleanup()
 
     def login_as(self, user_id):
+        with self.app.app_context():
+            session_identity = db.session.get(models.User, user_id).get_id()
         with self.client.session_transaction() as session:
             session.clear()
-            session["_user_id"] = str(user_id)
+            session["_user_id"] = session_identity
             session["_fresh"] = True
 
     def make_image_upload(self, size=(64, 48), image_format="PNG"):
@@ -357,6 +367,21 @@ class PageCreationTestCase(unittest.TestCase):
             self.assertEqual(len(revisions), 2)
             self.assertEqual(revisions[0].body_markdown, "Original road notes")
             self.assertEqual(revisions[1].body_markdown, "Updated by another player")
+            self.assertEqual(revisions[0].page_type, "article")
+            self.assertIsNone(revisions[0].session_number)
+            self.assertEqual(revisions[1].page_type, "recap")
+            self.assertEqual(revisions[1].session_number, 4)
+            revision_categories = {
+                revision.id: {
+                    snapshot.category_name
+                    for snapshot in models.PageRevisionCategories.query.filter_by(
+                        revision_id=revision.id
+                    )
+                }
+                for revision in revisions
+            }
+            self.assertEqual(revision_categories[revisions[0].id], {"Locations"})
+            self.assertEqual(revision_categories[revisions[1].id], {"Travel"})
             self.assertEqual(
                 revisions[1].edit_summary,
                 "Added current travel discoveries",
@@ -408,6 +433,9 @@ class PageCreationTestCase(unittest.TestCase):
         self.assertEqual(old_revision_response.status_code, 200)
         self.assertIn(b"Viewing version 1", old_revision_response.data)
         self.assertIn(b"Original road notes", old_revision_response.data)
+        self.assertNotIn(b"Session 4 Recap", old_revision_response.data)
+        self.assertIn(b">Locations</a>", old_revision_response.data)
+        self.assertNotIn(b">Travel</a>", old_revision_response.data)
         self.assertIn(b"Restore Version", old_revision_response.data)
         self.assertNotIn(b"Edit Page", old_revision_response.data)
         self.assertNotIn(b"Delete Revision", old_revision_response.data)
@@ -432,10 +460,9 @@ class PageCreationTestCase(unittest.TestCase):
             "/pages/view/old-road-name"
         )
         self.assertIn(b"Original road notes", restored_page_response.data)
-        self.assertIn(
-            b'<h1 class="title">Old Road Name -- Session 4 Recap</h1>',
-            restored_page_response.data,
-        )
+        self.assertIn(b'<h1 class="title">Old Road Name</h1>', restored_page_response.data)
+        self.assertIn(b">Locations</a>", restored_page_response.data)
+        self.assertNotIn(b">Travel</a>", restored_page_response.data)
 
         with self.app.app_context():
             page = models.Pages.query.filter_by(title="Old Road Name").one()
@@ -444,6 +471,16 @@ class PageCreationTestCase(unittest.TestCase):
                 page.current_revision_id,
             )
             self.assertEqual(restored_revision.revision_number, 1)
+            self.assertEqual(page.page_type, "article")
+            self.assertIsNone(page.session_number)
+            restored_category_names = {
+                category.name
+                for category in models.Categories.query.join(
+                    models.PageCategories,
+                    models.Categories.id == models.PageCategories.category_id,
+                ).filter(models.PageCategories.page_id == page.id)
+            }
+            self.assertEqual(restored_category_names, {"Locations"})
             self.assertEqual(
                 models.PageRevisions.query.filter_by(page_id=page.id).count(),
                 2,
@@ -572,6 +609,39 @@ class PageCreationTestCase(unittest.TestCase):
                 models.PageRevisions.query.filter_by(page_id=page_id).count(),
                 0,
             )
+
+    def test_regular_user_cannot_restore_an_old_official_snapshot(self):
+        self.login_as(self.admin_id)
+        create_response = self.client.post(
+            "/pages/new",
+            data={
+                "title": "Changing Policy",
+                "page_type": "official",
+                "body_markdown": "The original official policy.",
+            },
+        )
+        self.assertEqual(create_response.status_code, 302)
+        edit_response = self.client.post(
+            "/pages/edit/changing-policy",
+            data={
+                "title": "Changing Policy",
+                "page_type": "article",
+                "body_markdown": "This is now a community article.",
+                "edit_summary": "Changed this to an article",
+            },
+        )
+        self.assertEqual(edit_response.status_code, 302)
+
+        self.login_as(self.user_id)
+        old_revision_response = self.client.get(
+            "/pages/view/changing-policy/versions/1"
+        )
+        self.assertEqual(old_revision_response.status_code, 200)
+        self.assertNotIn(b"Restore Version", old_revision_response.data)
+        restore_response = self.client.post(
+            "/pages/view/changing-policy/versions/1/restore"
+        )
+        self.assertEqual(restore_response.status_code, 403)
 
     def test_regular_user_cannot_delete_own_page(self):
         create_response = self.client.post(
@@ -871,6 +941,214 @@ class PageCreationTestCase(unittest.TestCase):
             self.assertNotIn(b">Log Out</button>", response.data)
             self.assertIn(b'href="/static/style.css"', response.data)
 
+    def test_registration_requires_and_consumes_a_one_time_invite_key(self):
+        invite_key = "test-invite-key-that-is-long-enough"
+        with self.app.app_context():
+            invite = models.InviteKeys(key_hash=hash_invite_key(invite_key))
+            db.session.add(invite)
+            db.session.commit()
+            invite_id = invite.id
+
+        with self.client.session_transaction() as session:
+            session.clear()
+
+        invalid_response = self.client.post(
+            "/auth/register",
+            data={
+                "invite_key": "invalid-invite-key",
+                "username": "invited-user",
+                "email": "invited@example.com",
+                "password": "long-test-password",
+                "password_check": "long-test-password",
+            },
+        )
+        self.assertEqual(invalid_response.status_code, 200)
+        self.assertIn(b"invalid or has already been used", invalid_response.data)
+
+        register_response = self.client.post(
+            "/auth/register",
+            data={
+                "invite_key": invite_key,
+                "username": "invited-user",
+                "email": "invited@example.com",
+                "password": "long-test-password",
+                "password_check": "long-test-password",
+            },
+        )
+        self.assertEqual(register_response.status_code, 302)
+        self.assertTrue(register_response.headers["Location"].endswith("/auth/login"))
+
+        reused_response = self.client.post(
+            "/auth/register",
+            data={
+                "invite_key": invite_key,
+                "username": "second-invited-user",
+                "email": "second-invited@example.com",
+                "password": "long-test-password",
+                "password_check": "long-test-password",
+            },
+        )
+        self.assertEqual(reused_response.status_code, 200)
+        self.assertIn(b"invalid or has already been used", reused_response.data)
+
+        with self.app.app_context():
+            invite = db.session.get(models.InviteKeys, invite_id)
+            invited_user = models.User.query.filter_by(
+                username="invited-user"
+            ).one()
+            self.assertIsNotNone(invite.used_at)
+            self.assertEqual(invite.used_by, invited_user.id)
+            self.assertIsNone(
+                models.User.query.filter_by(username="second-invited-user").first()
+            )
+
+    def test_invite_generator_stores_only_hashes(self):
+        with self.app.app_context():
+            invite_keys = create_invite_keys(2)
+            stored_hashes = {
+                invite.key_hash for invite in models.InviteKeys.query.all()
+            }
+
+        self.assertEqual(len(invite_keys), 2)
+        self.assertEqual(len(set(invite_keys)), 2)
+        self.assertEqual(
+            stored_hashes,
+            {hash_invite_key(invite_key) for invite_key in invite_keys},
+        )
+        self.assertTrue(all(key not in stored_hashes for key in invite_keys))
+
+    def test_password_reset_is_one_time_and_revokes_existing_sessions(self):
+        with self.app.app_context():
+            first_token, _, _ = create_password_reset("page-author", 60)
+            reset_token, _, _ = create_password_reset("page-author", 60)
+            first_record = models.PasswordResetTokens.query.filter_by(
+                token_hash=hash_reset_token(first_token)
+            ).one()
+            self.assertIsNotNone(first_record.used_at)
+            self.assertNotEqual(first_token, reset_token)
+            self.assertNotIn(
+                reset_token,
+                {
+                    record.token_hash
+                    for record in models.PasswordResetTokens.query.all()
+                },
+            )
+
+        reset_client = self.app.test_client()
+        form_response = reset_client.get(
+            f"/auth/reset-password/{reset_token}"
+        )
+        self.assertEqual(form_response.status_code, 200)
+        self.assertIn(b"Choose a new password", form_response.data)
+        self.assertEqual(form_response.headers["Cache-Control"], "no-store")
+        self.assertEqual(form_response.headers["Referrer-Policy"], "no-referrer")
+
+        reset_response = reset_client.post(
+            f"/auth/reset-password/{reset_token}",
+            data={
+                "password": "brand-new-password",
+                "password_check": "brand-new-password",
+            },
+        )
+        self.assertEqual(reset_response.status_code, 302)
+        self.assertTrue(reset_response.headers["Location"].endswith("/auth/login"))
+
+        with self.app.app_context():
+            user = db.session.get(models.User, self.user_id)
+            reset_record = models.PasswordResetTokens.query.filter_by(
+                token_hash=hash_reset_token(reset_token)
+            ).one()
+            self.assertTrue(user.check_password("brand-new-password"))
+            self.assertFalse(user.check_password("test-password"))
+            self.assertEqual(user.session_version, 1)
+            self.assertIsNotNone(reset_record.used_at)
+
+        revoked_session_response = self.client.get("/pages/new")
+        self.assertEqual(revoked_session_response.status_code, 302)
+        self.assertIn("/auth/login", revoked_session_response.headers["Location"])
+
+        old_password_response = reset_client.post(
+            "/auth/login",
+            data={"username": "page-author", "password": "test-password"},
+        )
+        self.assertEqual(old_password_response.status_code, 200)
+        self.assertIn(b"Invalid username or password", old_password_response.data)
+        new_password_response = reset_client.post(
+            "/auth/login",
+            data={
+                "username": "page-author",
+                "password": "brand-new-password",
+            },
+        )
+        self.assertEqual(new_password_response.status_code, 302)
+        self.assertEqual(reset_client.get("/pages/new").status_code, 200)
+
+        reused_response = reset_client.get(
+            f"/auth/reset-password/{reset_token}"
+        )
+        self.assertEqual(reused_response.status_code, 200)
+        self.assertIn(b"invalid, expired, or has already been used", reused_response.data)
+
+    def test_expired_password_reset_is_rejected(self):
+        expired_token = "expired-reset-token"
+        with self.app.app_context():
+            db.session.add(
+                models.PasswordResetTokens(
+                    user_id=self.user_id,
+                    token_hash=hash_reset_token(expired_token),
+                    expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+                )
+            )
+            db.session.commit()
+
+        response = self.client.get(f"/auth/reset-password/{expired_token}")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"invalid, expired, or has already been used", response.data)
+        self.assertNotIn(b"Set New Password", response.data)
+
+    def test_required_configuration_is_validated(self):
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "SECRET_KEY, SQLALCHEMY_DATABASE_URI",
+        ):
+            create_app(
+                {
+                    "SECRET_KEY": None,
+                    "SQLALCHEMY_DATABASE_URI": None,
+                }
+            )
+
+    def test_login_is_rate_limited(self):
+        limited_app = create_app(
+            {
+                "TESTING": True,
+                "SECRET_KEY": "rate-limit-test-secret",
+                "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:",
+                "WTF_CSRF_ENABLED": False,
+                "RATELIMIT_ENABLED": True,
+                "IMAGE_UPLOAD_ROOT": self.upload_directory.name,
+            }
+        )
+        with limited_app.app_context():
+            db.create_all()
+            from search import initialize_search_index
+
+            initialize_search_index()
+
+        client = limited_app.test_client()
+        for _ in range(10):
+            response = client.post(
+                "/auth/login",
+                data={"username": "missing", "password": "incorrect"},
+            )
+            self.assertEqual(response.status_code, 200)
+
+        limited_response = client.post(
+            "/auth/login",
+            data={"username": "missing", "password": "incorrect"},
+        )
+        self.assertEqual(limited_response.status_code, 429)
+
     def test_all_pages_and_category_indexes(self):
         article_response = self.client.post(
             "/pages/new",
@@ -992,6 +1270,16 @@ class PageCreationTestCase(unittest.TestCase):
             },
         )
         self.assertEqual(create_response.status_code, 302)
+        edit_response = self.client.post(
+            "/pages/edit/categorized-page",
+            data={
+                "title": "Categorized Page",
+                "categories": [str(self.category_id)],
+                "body_markdown": "A second version of the categorized page.",
+                "edit_summary": "Added a second version",
+            },
+        )
+        self.assertEqual(edit_response.status_code, 302)
 
         rename_response = self.client.post(
             "/categories/locations/rename",
@@ -1055,6 +1343,16 @@ class PageCreationTestCase(unittest.TestCase):
 
         page_response = self.client.get("/pages/view/categorized-page")
         self.assertEqual(page_response.status_code, 200)
+        historical_response = self.client.get(
+            "/pages/view/categorized-page/versions/1"
+        )
+        self.assertEqual(historical_response.status_code, 200)
+        self.assertIn(b"Locations", historical_response.data)
+        self.assertNotIn(b'href="/categories/locations"', historical_response.data)
+        self.assertNotIn(
+            b'href="/categories/places-and-regions"',
+            historical_response.data,
+        )
 
     def test_homepage_shows_most_wanted_and_ten_recent_revisions(self):
         page_data = [

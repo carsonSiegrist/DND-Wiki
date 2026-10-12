@@ -42,6 +42,12 @@ class User(db.Model, UserMixin):
         default=lambda: datetime.now(timezone.utc)
     )
 
+    session_version: Mapped[int] = mapped_column(
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+
     def set_password(self, password: str) -> None:
         """Set the user's password hash."""
         self.password_hash = generate_password_hash(password)
@@ -49,6 +55,74 @@ class User(db.Model, UserMixin):
     def check_password(self, password: str) -> bool:
         """Check if the provided password matches the user's password hash."""
         return check_password_hash(self.password_hash, password)
+
+    def get_id(self) -> str:
+        """Include a revocable version in Flask-Login's signed session."""
+        return f"{self.id}:{self.session_version}"
+
+
+class InviteKeys(db.Model):
+    __tablename__ = "invite_keys"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    key_hash: Mapped[str] = mapped_column(
+        String(64),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    used_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
+    used_by: Mapped[int | None] = mapped_column(
+        db.ForeignKey("users.id"),
+        nullable=True,
+    )
+
+
+class PasswordResetTokens(db.Model):
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    user_id: Mapped[int] = mapped_column(
+        db.ForeignKey("users.id"),
+        nullable=False,
+        index=True,
+    )
+
+    token_hash: Mapped[str] = mapped_column(
+        String(64),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+    )
+
+    used_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
 
 
 
@@ -218,12 +292,51 @@ class PageRevisions(db.Model):
         nullable=True
     )
 
+    page_type: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+    )
+
+    session_number: Mapped[int | None] = mapped_column(
+        nullable=True,
+    )
+
     revision_number: Mapped[int] = mapped_column(
         nullable=False
     )
 
     __table_args__ = (
         db.UniqueConstraint('page_id', 'revision_number', name='unique_page_revision'),
+    )
+
+
+class PageRevisionCategories(db.Model):
+    __tablename__ = "page_revision_categories"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    revision_id: Mapped[int] = mapped_column(
+        db.ForeignKey("page_revisions.id"),
+        nullable=False,
+        index=True,
+    )
+
+    category_id: Mapped[int | None] = mapped_column(
+        db.ForeignKey("categories.id"),
+        nullable=True,
+    )
+
+    category_name: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "revision_id",
+            "category_name",
+            name="unique_revision_category_name",
+        ),
     )
 
 

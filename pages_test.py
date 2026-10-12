@@ -68,6 +68,8 @@ def run_test():
                 _this is a test of the markdown rendering functionality._
             """).strip(),
             edit_summary="Initial revision.",
+            page_type="recap",
+            session_number=1,
             revision_number=1,
         )
 

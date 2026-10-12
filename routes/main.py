@@ -9,7 +9,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 
 import models
-from extensions import db
+from extensions import db, limiter
 from forms.categories import DeleteCategoryForm, RenameCategoryForm
 from search import SEARCH_QUERY_LIMIT, SEARCH_RESULT_LIMIT, search_pages
 
@@ -68,6 +68,7 @@ def index():
 
 
 @main_bp.route("/search", methods=["GET"])
+@limiter.limit("120 per minute")
 def search():
     query = request.args.get("q", "").strip()[:SEARCH_QUERY_LIMIT]
     requested_page = max(request.args.get("page", 1, type=int), 1)
@@ -226,6 +227,10 @@ def delete_category(slug):
         abort(400)
 
     category_name = category.name
+    models.PageRevisionCategories.query.filter_by(category_id=category.id).update(
+        {models.PageRevisionCategories.category_id: None},
+        synchronize_session=False,
+    )
     models.PageCategories.query.filter_by(category_id=category.id).delete(
         synchronize_session=False
     )

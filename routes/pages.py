@@ -20,7 +20,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 
 import models
-from extensions import db
+from extensions import db, limiter
 from forms.pages import (
     DeletePageForm,
     DeleteRevisionForm,
@@ -82,6 +82,8 @@ def view_page(slug):
         "view_page.html",
         page=page,
         display_title=page.title,
+        display_page_type=current_revision.page_type,
+        display_session_number=current_revision.session_number,
         rendered_body=rendered_body,
         page_metadata=get_page_display_metadata(page, current_revision),
         can_edit=can_edit_page(page),
@@ -131,6 +133,8 @@ def view_revision(slug, revision_number):
         "view_page.html",
         page=page,
         display_title=get_revision_title(revision, page),
+        display_page_type=revision.page_type,
+        display_session_number=revision.session_number,
         revision=revision,
         rendered_body=render_wiki_markdown(revision.body_markdown),
         page_metadata=get_page_display_metadata(
@@ -138,7 +142,10 @@ def view_revision(slug, revision_number):
             revision,
             revision_date=True,
         ),
-        can_edit=can_edit_page(page),
+        can_edit=(
+            can_edit_page(page)
+            and (revision.page_type != "official" or is_admin())
+        ),
         can_delete=is_admin(),
         is_old_revision=True,
         restore_form=RestoreRevisionForm(),
@@ -161,12 +168,17 @@ def restore_revision(slug, revision_number):
     revision = get_revision_or_404(page, revision_number)
     if revision.id == page.current_revision_id:
         abort(400)
+    if revision.page_type == "official" and not is_admin():
+        abort(403)
 
     form = RestoreRevisionForm()
     if not form.validate_on_submit():
         abort(400)
 
     restore_page_title(page, get_revision_title(revision, page))
+    page.page_type = revision.page_type
+    page.session_number = revision.session_number
+    restore_revision_categories(page, revision)
     page.current_revision_id = revision.id
     page.updated_at = datetime.now(timezone.utc)
     set_page_updated_by(page, current_user.id)
@@ -202,6 +214,9 @@ def delete_revision(slug, revision_number):
     models.RevisionImages.query.filter_by(revision_id=revision.id).delete(
         synchronize_session=False
     )
+    models.PageRevisionCategories.query.filter_by(
+        revision_id=revision.id
+    ).delete(synchronize_session=False)
     db.session.delete(revision)
     db.session.commit()
 
@@ -211,6 +226,7 @@ def delete_revision(slug, revision_number):
 
 @pages_bp.route("/new", methods=["GET", "POST"])
 @login_required
+@limiter.limit("60 per hour", methods=["POST"])
 def create_page():
     form = PageCreateForm()
     configure_form(form)
@@ -268,6 +284,7 @@ def create_page():
 
 @pages_bp.route("/edit/<slug>", methods=["GET", "POST"])
 @login_required
+@limiter.limit("120 per hour", methods=["POST"])
 def edit_page(slug):
     page = models.Pages.query.filter_by(slug=slug).first_or_404()
 
@@ -367,6 +384,9 @@ def delete_page(slug):
         models.PageRevisionTitles.query.filter(
             models.PageRevisionTitles.revision_id.in_(revision_ids)
         ).delete(synchronize_session=False)
+        models.PageRevisionCategories.query.filter(
+            models.PageRevisionCategories.revision_id.in_(revision_ids)
+        ).delete(synchronize_session=False)
     models.PageRevisions.query.filter_by(page_id=page.id).delete(
         synchronize_session=False
     )
@@ -408,15 +428,34 @@ def get_revision_title(revision, page):
 
 
 def get_page_display_metadata(page, revision, revision_date=False):
-    categories = (
-        models.Categories.query.join(
-            models.PageCategories,
-            models.Categories.id == models.PageCategories.category_id,
+    if revision_date:
+        category_rows = (
+            db.session.query(models.PageRevisionCategories, models.Categories)
+            .outerjoin(
+                models.Categories,
+                models.PageRevisionCategories.category_id == models.Categories.id,
+            )
+            .filter(models.PageRevisionCategories.revision_id == revision.id)
+            .order_by(models.PageRevisionCategories.category_name.asc())
+            .all()
         )
-        .filter(models.PageCategories.page_id == page.id)
-        .order_by(models.Categories.name.asc())
-        .all()
-    )
+        categories = [
+            {
+                "name": snapshot.category_name,
+                "slug": category.slug if category is not None else None,
+            }
+            for snapshot, category in category_rows
+        ]
+    else:
+        categories = (
+            models.Categories.query.join(
+                models.PageCategories,
+                models.Categories.id == models.PageCategories.category_id,
+            )
+            .filter(models.PageCategories.page_id == page.id)
+            .order_by(models.Categories.name.asc())
+            .all()
+        )
 
     update_author = db.session.get(models.PageUpdateAuthors, page.id)
     updated_author_id = revision.author_id
@@ -782,6 +821,57 @@ def set_page_categories(page, form):
         )
 
 
+def snapshot_revision_categories(revision):
+    category_rows = (
+        models.Categories.query.join(
+            models.PageCategories,
+            models.Categories.id == models.PageCategories.category_id,
+        )
+        .filter(models.PageCategories.page_id == revision.page_id)
+        .order_by(models.Categories.name.asc())
+        .all()
+    )
+    for category in category_rows:
+        db.session.add(
+            models.PageRevisionCategories(
+                revision_id=revision.id,
+                category_id=category.id,
+                category_name=category.name,
+            )
+        )
+
+
+def restore_revision_categories(page, revision):
+    models.PageCategories.query.filter_by(page_id=page.id).delete(
+        synchronize_session=False
+    )
+    category_ids = [
+        category_id
+        for category_id, in db.session.query(
+            models.PageRevisionCategories.category_id
+        ).filter(
+            models.PageRevisionCategories.revision_id == revision.id,
+            models.PageRevisionCategories.category_id.is_not(None),
+        )
+    ]
+    if not category_ids:
+        return
+
+    existing_category_ids = {
+        category_id
+        for category_id, in db.session.query(models.Categories.id).filter(
+            models.Categories.id.in_(category_ids)
+        )
+    }
+    for category_id in existing_category_ids:
+        db.session.add(
+            models.PageCategories(
+                page_id=page.id,
+                category_id=category_id,
+            )
+        )
+
+
 def create_new_page(form, page_type):
     title = form.title.data.strip()
     page = models.Pages(
@@ -799,6 +889,8 @@ def create_new_page(form, page_type):
         author_id=current_user.id,
         body_markdown=form.body_markdown.data,
         edit_summary="Initial revision.",
+        page_type=page_type,
+        session_number=page.session_number,
         revision_number=1,
     )
     db.session.add(revision)
@@ -819,6 +911,7 @@ def create_new_page(form, page_type):
     )
     set_page_updated_by(page, current_user.id)
     set_page_categories(page, form)
+    snapshot_revision_categories(revision)
     refresh_page_links(page, revision.body_markdown)
     resolve_incoming_page_links(page)
     refresh_page_search(page, revision)
@@ -843,6 +936,8 @@ def update_page(page, form, page_type):
         author_id=current_user.id,
         body_markdown=form.body_markdown.data,
         edit_summary=(form.edit_summary.data or "").strip() or None,
+        page_type=page_type,
+        session_number=page.session_number,
         revision_number=(highest_revision or 0) + 1,
     )
     db.session.add(revision)
@@ -863,6 +958,7 @@ def update_page(page, form, page_type):
     )
     set_page_updated_by(page, current_user.id)
     set_page_categories(page, form)
+    snapshot_revision_categories(revision)
     refresh_page_links(page, revision.body_markdown)
     resolve_incoming_page_links(page)
     refresh_page_search(page, revision)
