@@ -1,0 +1,11 @@
+[Unit]
+Description=Update the D&D Wiki Cloudflare DNS record
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/dnd-wiki/cloudflare-ddns.env
+ExecStart=/opt/dnd-wiki/deploy/cloudflare-ddns.sh
+NoNewPrivileges=true
+PrivateTmp=true

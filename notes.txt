@@ -179,6 +179,8 @@ Operations
   HTTPS. Leave that unset for plain-HTTP local development.
 - `IMAGE_STORAGE_LIMIT_BYTES` controls the application upload quota. Production
   also uses a separate hard-capped filesystem so this is defense in depth.
+- Dynamic public IPv4 deployments can use the included Cloudflare DDNS systemd
+  timer. Its API token is stored outside the repository under `/etc/dnd-wiki`.
 - Apply schema changes with `flask db upgrade`.
 - Generate invites with `python generate_invite.py [--count N]`.
 - Generate reset links with `python generate_password_reset.py USERNAME`.
