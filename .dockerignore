@@ -1,0 +1,15 @@
+.git
+.gitignore
+.agents
+.codex
+.env
+deploy/*.env
+instance
+venv
+__pycache__
+*.py[cod]
+*.db
+*.sqlite*
+*.log
+.coverage
+.pytest_cache

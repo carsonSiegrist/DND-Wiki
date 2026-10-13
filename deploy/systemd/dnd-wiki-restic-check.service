@@ -1,0 +1,12 @@
+[Unit]
+Description=Check D&D Wiki restic repository
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/dnd-wiki/backup.env
+ExecStart=/usr/bin/restic check --read-data-subset=5%%
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

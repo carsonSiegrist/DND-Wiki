@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily D&D Wiki backup
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+RandomizedDelaySec=30m
+Persistent=true
+Unit=dnd-wiki-backup.service
+
+[Install]
+WantedBy=timers.target

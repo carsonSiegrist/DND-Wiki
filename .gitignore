@@ -1,11 +1,15 @@
 # Created by https://www.toptal.com/developers/gitignore/api/flask,python
 # Edit at https://www.toptal.com/developers/gitignore?templates=flask,python
 
+DEPLOYMENT.md
+
 ### Flask ###
 instance/*
 !instance/.gitignore
 .webassets-cache
 .env
+deploy/*.env
+!deploy/*.env.example
 
 ### Flask.Python Stack ###
 # Byte-compiled / optimized / DLL files

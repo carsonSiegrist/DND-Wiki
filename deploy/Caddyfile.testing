@@ -1,0 +1,19 @@
+{$WIKI_DOMAIN} {
+	basic_auth {
+		{$TEST_USERNAME} {$TEST_PASSWORD_HASH}
+	}
+
+	encode zstd gzip
+	reverse_proxy wiki:8000
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

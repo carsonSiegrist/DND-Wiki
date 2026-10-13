@@ -6,10 +6,39 @@ from datetime import datetime, timedelta, timezone
 import click
 from dotenv import load_dotenv
 from flask import Flask
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from extensions import db, limiter, login_manager, migrate
 
 load_dotenv()
+
+
+def get_nonnegative_int_env(name, default):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        parsed_value = int(value)
+    except ValueError as error:
+        raise RuntimeError(f"{name} must be a whole number.") from error
+    if parsed_value < 0:
+        raise RuntimeError(f"{name} cannot be negative.")
+    return parsed_value
+
+
+def get_bool_env(name, default):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    normalized_value = value.strip().lower()
+    if normalized_value in {"1", "true", "yes", "on"}:
+        return True
+    if normalized_value in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(
+        f"{name} must be one of: true, false, 1, 0, yes, no, on, off."
+    )
+
 
 def create_app(test_config=None):
     app = Flask(__name__)
@@ -25,18 +54,40 @@ def create_app(test_config=None):
     app.config["IMAGE_MAX_BATCH_BYTES"] = 50 * 1024 * 1024
     app.config["IMAGE_MAX_FILES"] = 10
     app.config["IMAGE_MAX_PIXELS"] = 40_000_000
-    app.config["IMAGE_STORAGE_LIMIT_BYTES"] = 45 * 1024 * 1024 * 1024
+    app.config["IMAGE_STORAGE_LIMIT_BYTES"] = get_nonnegative_int_env(
+        "IMAGE_STORAGE_LIMIT_BYTES",
+        45 * 1024 * 1024 * 1024,
+    )
     app.config["MAX_CONTENT_LENGTH"] = 51 * 1024 * 1024
     app.config["RATELIMIT_STORAGE_URI"] = os.getenv(
         "RATELIMIT_STORAGE_URI",
         "memory://",
     )
     app.config["RATELIMIT_HEADERS_ENABLED"] = True
+    app.config["TRUSTED_PROXY_COUNT"] = get_nonnegative_int_env(
+        "TRUSTED_PROXY_COUNT",
+        0,
+    )
+    app.config["SESSION_COOKIE_SECURE"] = get_bool_env(
+        "SESSION_COOKIE_SECURE",
+        False,
+    )
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
     if test_config is not None:
         app.config.update(test_config)
 
     validate_required_config(app)
+
+    trusted_proxy_count = app.config["TRUSTED_PROXY_COUNT"]
+    if trusted_proxy_count:
+        app.wsgi_app = ProxyFix(
+            app.wsgi_app,
+            x_for=trusted_proxy_count,
+            x_proto=trusted_proxy_count,
+            x_host=trusted_proxy_count,
+        )
 
     db.init_app(app)
     login_manager.init_app(app)

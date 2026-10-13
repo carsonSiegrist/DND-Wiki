@@ -27,6 +27,10 @@ categories, revisions, and user roles.
 - SQLite with FTS5 support
 - Writable storage for the SQLite database and `instance/uploads`
 
+For an internet-facing AlmaLinux deployment, including Docker, Caddy, firewall,
+hard storage caps, testing-to-production reset, updates, and off-host backups,
+see [DEPLOYMENT.md](DEPLOYMENT.md).
+
 Install dependencies in a virtual environment:
 
 ```bash
@@ -54,6 +58,13 @@ backend such as Redis before running multiple application processes.
 `WIKI_BASE_URL` is optional and controls the public URL printed by the password
 reset script. It defaults to `http://localhost:5000` and should be set to the
 HTTPS production origin.
+
+`IMAGE_STORAGE_LIMIT_BYTES` optionally overrides the 45 GiB image-storage
+default. `TRUSTED_PROXY_COUNT` controls how many known reverse-proxy hops Flask
+trusts and must remain `0` unless the application port is inaccessible to
+clients. Set `SESSION_COOKIE_SECURE=true` on an HTTPS-only deployment. The
+provided production configuration uses one Caddy hop, secure cookies, and a
+32 GiB image quota inside a separately capped filesystem.
 
 ## Database setup and migrations
 

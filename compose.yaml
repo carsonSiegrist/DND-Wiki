@@ -1,0 +1,80 @@
+name: dnd-wiki
+
+services:
+  wiki:
+    build:
+      context: .
+    image: dnd-wiki:local
+    restart: unless-stopped
+    env_file:
+      - ./deploy/wiki.env
+    expose:
+      - "8000"
+    volumes:
+      - /srv/dnd-wiki/app-data:/app/instance:Z
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 1.5
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=5)"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    networks:
+      - web
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    depends_on:
+      wiki:
+        condition: service_healthy
+    env_file:
+      - ./deploy/caddy.env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro,Z
+      - /srv/dnd-wiki/caddy-data:/data:Z
+      - /srv/dnd-wiki/caddy-config:/config:Z
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    networks:
+      - web
+
+networks:
+  web:
+    driver: bridge
