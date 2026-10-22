@@ -4,6 +4,12 @@
 {% block header %}{{ form_title }}{% endblock %}
 
 {% block content %}
+    {% if editing %}
+        <p class="page-action">
+            <a href="{{ url_for('pages.view_page', slug=page_slug) }}">← Back to page</a>
+        </p>
+    {% endif %}
+
     <form method="POST" id="create-page-form">
         {{ form.hidden_tag() }}
 
@@ -80,9 +86,9 @@
         <fieldset class="image-editor">
             <legend>Images</legend>
             <p>
-                Upload up to 10 JPEG, PNG, or WebP images at a time (15 MB each,
-                50 MB total). Add alternative text, place the cursor in the page body,
-                and select “Insert at Cursor.”
+                Upload up to 10 JPEG, PNG, WebP, or GIF images at a time (15 MB each,
+                50 MB total). Animated GIFs are converted to WebP. Add alternative
+                text, place the cursor in the page body, and select “Insert at Cursor.”
                 To remove an image from this version, delete its generated Markdown
                 from the page body; historical versions keep their images.
             </p>
@@ -91,7 +97,7 @@
                 <input
                     type="file"
                     id="image-files"
-                    accept="image/jpeg,image/png,image/webp"
+                    accept="image/gif,image/jpeg,image/png,image/webp"
                     multiple
                 >
                 <button type="button" id="upload-images" disabled>Upload Images</button>
@@ -124,7 +130,23 @@
         {% endif %}
 
         {{ form.submit() }}
+        {% if not editing %}
+            <button type="button" id="show-clear-page-data" class="danger-button">Clear Data</button>
+        {% endif %}
     </form>
+
+    {% if not editing %}
+        <dialog id="clear-page-data-confirmation">
+            <h2>Clear page data?</h2>
+            <p>
+                This permanently clears all text, selections, uploaded-image
+                references, and the saved browser draft for this page.
+                This action is irreversible.
+            </p>
+            <button type="button" id="confirm-clear-page-data" class="danger-button">Clear Data</button>
+            <button type="button" id="cancel-clear-page-data">Cancel</button>
+        </dialog>
+    {% endif %}
 {% endblock %}
 
 {% block scripts %}
@@ -143,6 +165,10 @@
         const imageUploadProgress = document.getElementById("image-upload-progress");
         const imageUploadStatus = document.getElementById("image-upload-status");
         const imageCards = document.getElementById("image-cards");
+        const clearDataButton = document.getElementById("show-clear-page-data");
+        const clearDataDialog = document.getElementById("clear-page-data-confirmation");
+        const confirmClearDataButton = document.getElementById("confirm-clear-page-data");
+        const cancelClearDataButton = document.getElementById("cancel-clear-page-data");
         const draftKey = {{ draft_key | tojson }};
         const preservePrefilledTitle = {{ prefilled_title | tojson }};
         const imagePageId = {{ image_page_id | default(none) | tojson }};
@@ -260,6 +286,27 @@
             }
         }
 
+        function clearCreatePageData() {
+            form.reset();
+            form.title.value = "";
+            form.body_markdown.value = "";
+            replaceNewCategories([]);
+            form.querySelectorAll('input[name="categories"]').forEach(field => {
+                field.checked = false;
+            });
+            if (imageUploadSessionField) {
+                imageUploadSessionField.value = crypto.randomUUID();
+            }
+            imageFilesField.value = "";
+            imageRecords.clear();
+            renderImageCards();
+            setImageStatus("");
+            localStorage.removeItem(draftKey);
+            updateRecapFields();
+            clearDataDialog.close();
+            form.title.focus();
+        }
+
         function setImageStatus(message, isError = false) {
             imageUploadStatus.textContent = message;
             imageUploadStatus.classList.toggle("error", isError);
@@ -313,6 +360,16 @@
                 preview.src = image.thumbnail_url;
                 preview.alt = "";
                 preview.loading = "lazy";
+                if (image.animated) {
+                    preview.classList.add("animated-image");
+                    preview.title = "Animated image — hover to replay";
+                    const animationSource = preview.getAttribute("src");
+                    preview.addEventListener("mouseenter", () => {
+                        const replayUrl = new URL(animationSource, window.location.href);
+                        replayUrl.searchParams.set("replay", Date.now().toString());
+                        preview.src = `${replayUrl.pathname}${replayUrl.search}`;
+                    });
+                }
 
                 const filename = document.createElement("p");
                 filename.className = "image-filename";
@@ -391,6 +448,8 @@
                 return;
             }
 
+            const requestedUploadSession = imageUploadSessionField.value;
+
             const parameters = new URLSearchParams();
             if (imagePageId !== null) {
                 parameters.set("page_id", imagePageId);
@@ -399,11 +458,14 @@
 
             try {
                 const response = await fetch(
-                    `/images/session/${encodeURIComponent(imageUploadSessionField.value)}${suffix}`
+                    `/images/session/${encodeURIComponent(requestedUploadSession)}${suffix}`
                 );
                 const data = await response.json();
                 if (!response.ok) {
                     throw new Error(data.error || "Images could not be loaded.");
+                }
+                if (imageUploadSessionField.value !== requestedUploadSession) {
+                    return;
                 }
                 addImageRecords(data.images || [], true);
             } catch (error) {
@@ -429,6 +491,9 @@
             const request = new XMLHttpRequest();
             request.open("POST", "/images/upload");
             uploadImagesButton.disabled = true;
+            if (clearDataButton) {
+                clearDataButton.disabled = true;
+            }
             imageFilesField.disabled = true;
             imageUploadProgress.hidden = false;
             imageUploadProgress.value = 0;
@@ -440,6 +505,9 @@
                         (event.loaded / event.total) * 100
                     );
                 }
+            });
+            request.upload.addEventListener("load", () => {
+                setImageStatus("Processing images…");
             });
             request.addEventListener("load", () => {
                 let data;
@@ -472,6 +540,9 @@
             });
             request.addEventListener("loadend", () => {
                 imageFilesField.disabled = false;
+                if (clearDataButton) {
+                    clearDataButton.disabled = false;
+                }
                 imageUploadProgress.hidden = true;
                 updateUploadButton();
             });
@@ -532,6 +603,11 @@
             updateUploadButton();
         });
         uploadImagesButton.addEventListener("click", uploadImages);
+        if (clearDataButton) {
+            clearDataButton.addEventListener("click", () => clearDataDialog.showModal());
+            confirmClearDataButton.addEventListener("click", clearCreatePageData);
+            cancelClearDataButton.addEventListener("click", () => clearDataDialog.close());
+        }
         form.addEventListener("input", saveDraft);
         form.addEventListener("change", saveDraft);
         form.addEventListener("submit", saveDraft);

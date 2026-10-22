@@ -179,6 +179,10 @@ input:disabled {
     opacity: 0.65;
 }
 
+.danger-button {
+    border-color: #a32626;
+}
+
 fieldset {
     background: rgba(255, 249, 229, 0.42);
     border: 1px solid var(--border);
@@ -228,7 +232,10 @@ blockquote {
     border-left: 3px solid var(--border);
     color: #53462f;
     margin-left: 1rem;
+    overflow-wrap: anywhere;
     padding-left: 0.75rem;
+    white-space: normal;
+    word-break: break-word;
 }
 
 hr {
@@ -372,6 +379,17 @@ dialog::backdrop {
     height: auto;
     max-width: 100%;
     padding: 2px;
+}
+
+.wiki-page-body img.animated-image,
+.image-card img.animated-image {
+    border: 3px double var(--heading);
+    cursor: pointer;
+}
+
+.wiki-page-body img.animated-image:hover,
+.image-card img.animated-image:hover {
+    box-shadow: 0 0 0 2px rgba(111, 37, 37, 0.22);
 }
 
 @media (max-width: 46rem) {

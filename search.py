@@ -114,7 +114,7 @@ def search_pages(query):
     if not tokens:
         return []
 
-    match_query = " AND ".join(f'"{token}"' for token in tokens)
+    match_query = " AND ".join(f'"{token}"*' for token in tokens)
     search_rows = db.session.execute(
         text(
             "SELECT CAST(page_id AS INTEGER) AS page_id, title, body, "
@@ -123,6 +123,37 @@ def search_pages(query):
         ),
         {"match_query": match_query},
     ).mappings().all()
+
+    rows_by_page_id = {row["page_id"]: dict(row) for row in search_rows}
+    substring_parameters = {}
+    substring_clauses = []
+    for index, token in enumerate(tokens):
+        parameter_name = f"substring_{index}"
+        substring_parameters[parameter_name] = f"%{token}%"
+        substring_clauses.append(
+            f"(lower(title) LIKE :{parameter_name} "
+            f"OR lower(body) LIKE :{parameter_name})"
+        )
+
+    substring_rows = db.session.execute(
+        text(
+            "SELECT CAST(page_id AS INTEGER) AS page_id, title, body "
+            "FROM page_search WHERE " + " AND ".join(substring_clauses)
+        ),
+        substring_parameters,
+    ).mappings().all()
+    for row in substring_rows:
+        rows_by_page_id.setdefault(
+            row["page_id"],
+            {
+                "page_id": row["page_id"],
+                "title": row["title"],
+                "body": row["body"],
+                "relevance": 0.0,
+            },
+        )
+
+    search_rows = list(rows_by_page_id.values())
 
     page_ids = [row["page_id"] for row in search_rows]
     if not page_ids:
@@ -189,8 +220,7 @@ def get_title_match_tier(title, normalized_query, tokens):
     if normalized_query in normalized_title:
         return 2
 
-    title_tokens = set(get_search_tokens(normalized_title))
-    if all(token in title_tokens for token in tokens):
+    if all(token in normalized_title for token in tokens):
         return 3
 
     return None
@@ -231,7 +261,7 @@ def find_best_match(body, normalized_query, tokens):
     )
     phrase_matches = list(
         re.finditer(
-            rf"(?<!\w){phrase_pattern}(?!\w)",
+            phrase_pattern,
             body,
             re.IGNORECASE,
         )
@@ -294,7 +324,7 @@ def get_token_occurrences(body, tokens):
     occurrences = []
     for token in tokens:
         for match in re.finditer(
-            rf"(?<!\w){re.escape(token)}(?!\w)",
+            re.escape(token),
             body,
             re.IGNORECASE,
         ):

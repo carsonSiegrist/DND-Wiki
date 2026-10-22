@@ -89,6 +89,17 @@
 {% endblock %}
 
 {% block scripts %}
+    <script>
+        document.querySelectorAll(".wiki-page-body img.animated-image").forEach(image => {
+            const animationSource = image.getAttribute("src");
+            image.title = "Animated image — hover to replay";
+            image.addEventListener("mouseenter", () => {
+                const replayUrl = new URL(animationSource, window.location.href);
+                replayUrl.searchParams.set("replay", Date.now().toString());
+                image.src = `${replayUrl.pathname}${replayUrl.search}`;
+            });
+        });
+    </script>
     {% if clear_page_draft %}
         <script>
             localStorage.removeItem({{ draft_key | tojson }});

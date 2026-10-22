@@ -11,6 +11,7 @@
         <div class="primary-navigation">
             <a href="{{ url_for('main.index') }}">Home</a>
             <a href="{{ url_for('main.all_pages') }}">All Pages</a>
+            <a href="{{ url_for('main.filter_pages') }}">Filter Pages</a>
             <a href="{{ url_for('main.categories') }}">Categories</a>
             {% if current_user.is_authenticated %}
                 <form method="get" action="{{ url_for('pages.create_page') }}">

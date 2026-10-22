@@ -134,6 +134,31 @@ class PageCreationTestCase(unittest.TestCase):
         self.assertIn(b'value="4"', response.data)
         self.assertIn(b"New Category", response.data)
         self.assertIn(b"localStorage.setItem", response.data)
+        self.assertNotIn(b"Back to page", response.data)
+        self.assertIn(b'<a href="/filter-pages">Filter Pages</a>', response.data)
+        self.assertIn(
+            b'id="show-clear-page-data" class="danger-button"',
+            response.data,
+        )
+        self.assertIn(b'id="clear-page-data-confirmation"', response.data)
+        self.assertIn(b"This action is irreversible.", response.data)
+        self.assertIn(b"function clearCreatePageData()", response.data)
+        self.assertIn(b"crypto.randomUUID()", response.data)
+
+    def test_single_newlines_render_as_line_breaks(self):
+        response = self.client.post(
+            "/pages/new",
+            data={
+                "title": "Field Notes",
+                "body_markdown": "First line\nSecond line",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+
+        view_response = self.client.get(response.headers["Location"])
+        self.assertEqual(view_response.status_code, 200)
+        self.assertIn(b"<p>First line<br>\nSecond line</p>", view_response.data)
 
     def test_create_recap_with_existing_and_new_categories(self):
         response = self.client.post(
@@ -329,6 +354,11 @@ class PageCreationTestCase(unittest.TestCase):
         self.login_as(self.other_user_id)
         edit_form_response = self.client.get("/pages/edit/old-road-name")
         self.assertIn(b"Edit Summary", edit_form_response.data)
+        self.assertNotIn(b'id="show-clear-page-data"', edit_form_response.data)
+        self.assertIn(
+            b'<a href="/pages/view/old-road-name">\xe2\x86\x90 Back to page</a>',
+            edit_form_response.data,
+        )
 
         edit_response = self.client.post(
             "/pages/edit/old-road-name",
@@ -1269,6 +1299,83 @@ class PageCreationTestCase(unittest.TestCase):
         )
         self.assertNotIn(b"Manage Category", category_response.data)
 
+    def test_filter_pages_requires_all_categories_and_any_selected_type(self):
+        both_categories_response = self.client.post(
+            "/pages/new",
+            data={
+                "title": "Article With Both",
+                "categories": [str(self.category_id)],
+                "new_categories-0": "Lore",
+                "body_markdown": "Article with both selected categories.",
+            },
+        )
+        self.assertEqual(both_categories_response.status_code, 302)
+
+        with self.app.app_context():
+            lore_id = models.Categories.query.filter_by(name="Lore").one().id
+
+        one_category_response = self.client.post(
+            "/pages/new",
+            data={
+                "title": "Article With One",
+                "categories": [str(self.category_id)],
+                "body_markdown": "Article with only one selected category.",
+            },
+        )
+        self.assertEqual(one_category_response.status_code, 302)
+
+        recap_response = self.client.post(
+            "/pages/new",
+            data={
+                "title": "Recap With Both",
+                "is_recap": "y",
+                "session_number": "4",
+                "categories": [str(self.category_id), str(lore_id)],
+                "body_markdown": "Recap with both selected categories.",
+            },
+        )
+        self.assertEqual(recap_response.status_code, 302)
+
+        self.login_as(self.admin_id)
+        official_response = self.client.post(
+            "/pages/new",
+            data={
+                "title": "Official With Both",
+                "page_type": "official",
+                "categories": [str(self.category_id), str(lore_id)],
+                "body_markdown": "Official page with both selected categories.",
+            },
+        )
+        self.assertEqual(official_response.status_code, 302)
+
+        initial_response = self.client.get("/filter-pages")
+        self.assertEqual(initial_response.status_code, 200)
+        self.assertIn(b'<input type="hidden" name="filtered" value="1">', initial_response.data)
+        self.assertIn(b'value="article"', initial_response.data)
+        self.assertIn(b'value="recap"', initial_response.data)
+        self.assertIn(b'value="official"', initial_response.data)
+        self.assertLess(
+            initial_response.data.index(b"Locations"),
+            initial_response.data.index(b"Lore"),
+        )
+        self.assertNotIn(b"<h2>Results</h2>", initial_response.data)
+
+        filtered_response = self.client.get(
+            "/filter-pages?filtered=1&type=article&type=recap"
+            "&category=locations&category=lore"
+        )
+        self.assertEqual(filtered_response.status_code, 200)
+        self.assertIn(b"Article With Both", filtered_response.data)
+        self.assertIn(b"Recap With Both", filtered_response.data)
+        self.assertNotIn(b"Article With One", filtered_response.data)
+        self.assertNotIn(b"Official With Both", filtered_response.data)
+        self.assertEqual(filtered_response.data.count(b" checked"), 4)
+
+        no_match_response = self.client.get(
+            "/filter-pages?filtered=1&type=official&category=missing"
+        )
+        self.assertIn(b"Official With Both", no_match_response.data)
+
     def test_only_admin_can_rename_and_delete_categories(self):
         create_response = self.client.post(
             "/pages/new",
@@ -1490,6 +1597,34 @@ class PageCreationTestCase(unittest.TestCase):
         self.assertNotIn(b"<mark>Red</mark> paint", response.data)
         self.assertNotIn(b"<script>alert('danger')</script>", response.data)
         self.assertNotIn(b"danger", response.data)
+
+    def test_search_matches_prefixes_and_substrings_within_words(self):
+        plural_response = self.client.post(
+            "/pages/new",
+            data={
+                "title": "Tropical Provisions",
+                "body_markdown": "The crate contains pineapples for the voyage.",
+            },
+        )
+        self.assertEqual(plural_response.status_code, 302)
+
+        embedded_response = self.client.post(
+            "/pages/new",
+            data={
+                "title": "Cipher Ledger",
+                "body_markdown": "The strange passphrase is apineapplea.",
+            },
+        )
+        self.assertEqual(embedded_response.status_code, 302)
+
+        response = self.client.get("/search?q=pineapple")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"2 results for", response.data)
+        self.assertIn(b'href="/pages/view/tropical-provisions"', response.data)
+        self.assertIn(b'href="/pages/view/cipher-ledger"', response.data)
+        self.assertIn(b"<mark>pineapple</mark>s", response.data)
+        self.assertIn(b"a<mark>pineapple</mark>a", response.data)
 
     def test_search_index_tracks_edits_restores_and_deletion(self):
         create_response = self.client.post(
@@ -1805,8 +1940,9 @@ class PageCreationTestCase(unittest.TestCase):
         self.assertIn(b'id="image-files"', form_response.data)
         self.assertIn(b'id="image_upload_session"', form_response.data)
         self.assertIn(b"Insert at Cursor", form_response.data)
+        self.assertIn(b"Processing images", form_response.data)
 
-    def test_image_upload_limits_and_animation_are_enforced(self):
+    def test_image_upload_limits_are_enforced(self):
         self.app.config["IMAGE_MAX_FILE_BYTES"] = 10
         oversized_file_response = self.upload_image(str(uuid4()))
         self.assertEqual(oversized_file_response.status_code, 413)
@@ -1837,30 +1973,74 @@ class PageCreationTestCase(unittest.TestCase):
         self.assertEqual(storage_limit_response.status_code, 400)
         self.app.config["IMAGE_STORAGE_LIMIT_BYTES"] = 45 * 1024 * 1024 * 1024
 
-        first_frame = Image.new("RGB", (16, 16), (255, 0, 0))
-        second_frame = Image.new("RGB", (16, 16), (0, 0, 255))
-        animated_upload = io.BytesIO()
-        first_frame.save(
-            animated_upload,
-            format="WEBP",
-            save_all=True,
-            append_images=[second_frame],
-            duration=100,
-            loop=0,
-        )
-        first_frame.close()
-        second_frame.close()
-        animated_upload.seek(0)
-        animated_response = self.client.post(
+
+    def test_animated_webp_and_gif_uploads_play_once_and_are_marked(self):
+        def make_animation(image_format):
+            first_frame = Image.new("RGBA", (16, 16), (255, 0, 0, 255))
+            second_frame = Image.new("RGBA", (16, 16), (0, 0, 255, 255))
+            animation = io.BytesIO()
+            first_frame.save(
+                animation,
+                format=image_format,
+                save_all=True,
+                append_images=[second_frame],
+                duration=[80, 120],
+                loop=0,
+            )
+            first_frame.close()
+            second_frame.close()
+            animation.seek(0)
+            return animation
+
+        upload_session = str(uuid4())
+        upload_response = self.client.post(
             "/images/upload",
             data={
-                "upload_session": str(uuid4()),
-                "images": (animated_upload, "animated.webp"),
+                "upload_session": upload_session,
+                "images": [
+                    (make_animation("WEBP"), "sparkle.webp"),
+                    (make_animation("GIF"), "sparkle.gif"),
+                ],
             },
             content_type="multipart/form-data",
         )
-        self.assertEqual(animated_response.status_code, 400)
-        self.assertIn(b"animated", animated_response.data)
+
+        self.assertEqual(upload_response.status_code, 201)
+        uploaded_images = upload_response.get_json()["images"]
+        self.assertEqual(len(uploaded_images), 2)
+        self.assertTrue(all(image["animated"] for image in uploaded_images))
+
+        with self.app.app_context():
+            from image_service import get_variant_path
+
+            for uploaded_image in uploaded_images:
+                for variant in ("master", "display", "thumbnail"):
+                    with Image.open(
+                        get_variant_path(uploaded_image["id"], variant)
+                    ) as stored_image:
+                        self.assertEqual(stored_image.format, "WEBP")
+                        self.assertEqual(stored_image.n_frames, 2)
+                        self.assertEqual(stored_image.info.get("loop"), 1)
+
+        image_markdown = "\n\n".join(
+            f"![Animated image]({image['display_url']})"
+            for image in uploaded_images
+        )
+        create_response = self.client.post(
+            "/pages/new",
+            data={
+                "image_upload_session": upload_session,
+                "title": "Animated Gallery",
+                "body_markdown": image_markdown,
+            },
+        )
+        self.assertEqual(create_response.status_code, 302)
+
+        view_response = self.client.get("/pages/view/animated-gallery")
+        self.assertEqual(view_response.status_code, 200)
+        self.assertEqual(view_response.data.count(b'class="animated-image"'), 2)
+        self.assertIn(b"hover to replay", view_response.data)
+        self.assertIn(b'replayUrl.searchParams.set("replay"', view_response.data)
 
     def test_image_management_requires_a_valid_csrf_token(self):
         self.app.config["WTF_CSRF_ENABLED"] = True

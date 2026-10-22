@@ -16,6 +16,11 @@ from search import SEARCH_QUERY_LIMIT, SEARCH_RESULT_LIMIT, search_pages
 
 main_bp = Blueprint("main", __name__)
 ADMIN_ROLE = "admin"
+PAGE_TYPE_LABELS = {
+    "article": "Article",
+    "recap": "Recap",
+    "official": "Official",
+}
 
 
 def is_admin():
@@ -119,6 +124,71 @@ def all_pages():
         article_rows=[
             (page, categories_by_page.get(page.id, [])) for page in articles
         ],
+    )
+
+
+@main_bp.route("/filter-pages", methods=["GET"])
+def filter_pages():
+    categories = models.Categories.query.order_by(
+        func.lower(models.Categories.name).asc()
+    ).all()
+    selected_types = {
+        page_type
+        for page_type in request.args.getlist("type")
+        if page_type in PAGE_TYPE_LABELS
+    }
+    categories_by_slug = {category.slug: category for category in categories}
+    selected_category_slugs = {
+        slug
+        for slug in request.args.getlist("category")
+        if slug in categories_by_slug
+    }
+    selected_categories = [
+        category
+        for category in categories
+        if category.slug in selected_category_slugs
+    ]
+    filter_applied = request.args.get("filtered") == "1"
+    page_rows = []
+
+    if filter_applied:
+        query = models.Pages.query
+        if selected_types:
+            query = query.filter(models.Pages.page_type.in_(selected_types))
+        if selected_categories:
+            selected_category_ids = [
+                category.id for category in selected_categories
+            ]
+            query = (
+                query.join(
+                    models.PageCategories,
+                    models.Pages.id == models.PageCategories.page_id,
+                )
+                .filter(
+                    models.PageCategories.category_id.in_(selected_category_ids)
+                )
+                .group_by(models.Pages.id)
+                .having(
+                    func.count(func.distinct(models.PageCategories.category_id))
+                    == len(selected_category_ids)
+                )
+            )
+
+        pages = query.order_by(func.lower(models.Pages.title).asc()).all()
+        page_categories = get_categories_by_page(pages)
+        page_rows = [
+            (page, page_categories.get(page.id, []))
+            for page in pages
+        ]
+
+    return render_template(
+        "filter_pages.html",
+        page_type_labels=PAGE_TYPE_LABELS,
+        categories=categories,
+        selected_types=selected_types,
+        selected_category_slugs=selected_category_slugs,
+        filter_applied=filter_applied,
+        page_rows=page_rows,
     )
 
 

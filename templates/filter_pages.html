@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% from "_category_links.html" import category_links %}
+
+{% block title %}Filter Pages - D&amp;D Wiki{% endblock %}
+{% block header %}Filter Pages{% endblock %}
+
+{% block content %}
+    <p>
+        Results match any selected page type and every selected category.
+        Leaving a group unchecked does not restrict that group.
+    </p>
+
+    <form class="page-filter" method="GET" action="{{ url_for('main.filter_pages') }}">
+        <input type="hidden" name="filtered" value="1">
+
+        <fieldset>
+            <legend>Page Types</legend>
+            {% for value, label in page_type_labels.items() %}
+                <label>
+                    <input
+                        type="checkbox"
+                        name="type"
+                        value="{{ value }}"
+                        {% if value in selected_types %}checked{% endif %}
+                    >
+                    {{ label }}
+                </label><br>
+            {% endfor %}
+        </fieldset>
+
+        <fieldset>
+            <legend>Categories</legend>
+            {% for category in categories %}
+                <label>
+                    <input
+                        type="checkbox"
+                        name="category"
+                        value="{{ category.slug }}"
+                        {% if category.slug in selected_category_slugs %}checked{% endif %}
+                    >
+                    {{ category.name }}
+                </label><br>
+            {% else %}
+                <span>No categories have been created yet.</span>
+            {% endfor %}
+        </fieldset>
+
+        <p><button type="submit">Filter</button></p>
+    </form>
+
+    {% if filter_applied %}
+        <section>
+            <h2>Results</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th scope="col">Title</th>
+                        <th scope="col">Type</th>
+                        <th scope="col">Recap Number</th>
+                        <th scope="col">Categories</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for page, page_categories in page_rows %}
+                        <tr>
+                            <td><a href="{{ url_for('pages.view_page', slug=page.slug) }}">{{ page.title }}</a></td>
+                            <td>{{ page_type_labels[page.page_type] }}</td>
+                            <td>{{ page.session_number if page.page_type == "recap" else "—" }}</td>
+                            <td>{{ category_links(page_categories) }}</td>
+                        </tr>
+                    {% else %}
+                        <tr>
+                            <td colspan="4">No pages match all selected filters.</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </section>
+    {% endif %}
+{% endblock %}

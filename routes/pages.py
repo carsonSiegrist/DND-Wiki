@@ -336,6 +336,7 @@ def edit_page(slug):
         get_draft_key(page),
         editing=True,
         image_page_id=page.id,
+        page_slug=page.slug,
     )
 
 
@@ -497,6 +498,7 @@ def render_page_form(
     editing=False,
     prefilled_title=False,
     image_page_id=None,
+    page_slug=None,
 ):
     return render_template(
         "create_page.html",
@@ -506,6 +508,7 @@ def render_page_form(
         editing=editing,
         prefilled_title=prefilled_title,
         image_page_id=image_page_id,
+        page_slug=page_slug,
     )
 
 
@@ -649,7 +652,9 @@ def render_wiki_markdown(body_markdown):
         )
 
     linked_markdown = WIKI_LINK_PATTERN.sub(replace_wiki_link, body_markdown)
-    return sanitize_rendered_html(markdown.markdown(linked_markdown))
+    return sanitize_rendered_html(
+        markdown.markdown(linked_markdown, extensions=["nl2br"])
+    )
 
 
 def refresh_page_links(page, body_markdown):
