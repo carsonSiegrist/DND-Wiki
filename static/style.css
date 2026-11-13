@@ -374,22 +374,25 @@ dialog::backdrop {
     gap: 0.5rem;
 }
 
+.wiki-page-body {
+    font-family: Arial, Helvetica, sans-serif;
+    line-height: 1.5;
+    max-width: 60ch;
+    padding-left: 1rem;
+    text-align: left;
+    font-size: clamp(1rem, 0.9rem + 0.5vw, 1.25rem);
+}
+
 .wiki-page-body img {
     border: 1px solid var(--border);
+    display: block;
     height: auto;
+    max-height: calc(100vh - 2rem);
+    max-height: calc(100svh - 2rem);
     max-width: 100%;
+    object-fit: contain;
     padding: 2px;
-}
-
-.wiki-page-body img.animated-image,
-.image-card img.animated-image {
-    border: 3px double var(--heading);
-    cursor: pointer;
-}
-
-.wiki-page-body img.animated-image:hover,
-.image-card img.animated-image:hover {
-    box-shadow: 0 0 0 2px rgba(111, 37, 37, 0.22);
+    width: auto;
 }
 
 @media (max-width: 46rem) {

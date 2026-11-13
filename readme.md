@@ -17,7 +17,7 @@ categories, revisions, and user roles.
 - `[[Wiki Link]]` syntax with stable ID-based resolved links and wanted pages
 - Multiple categories per page, with administrator rename/delete controls
 - SQLite FTS5 search with title-weighted results and contextual highlighting
-- Multiple-image uploads with master, display, and thumbnail WebP variants
+- Static JPEG, PNG, and WebP uploads with master, display, and thumbnail variants
 - Browser-local draft recovery for page forms
 - Per-client or per-user rate limits on sensitive and expensive routes
 

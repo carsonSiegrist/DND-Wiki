@@ -31,9 +31,9 @@ from extensions import db
 DEFAULT_MAX_FILE_BYTES = 15 * 1024 * 1024
 DEFAULT_MAX_PIXELS = 40_000_000
 DEFAULT_STORAGE_LIMIT_BYTES = 45 * 1024 * 1024 * 1024
-IMAGE_FORMATS = {"GIF", "JPEG", "PNG", "WEBP"}
-ANIMATED_IMAGE_FORMATS = {"GIF", "WEBP"}
-DEFAULT_MAX_ANIMATION_FRAMES = 500
+IMAGE_FORMATS = {"JPEG", "PNG", "WEBP"}
+IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png", ".webp"}
+IMAGE_TYPE_ERROR = "Only JPEG, PNG, and WebP images are allowed."
 IMAGE_VARIANT_SIZES = {
     "master": 6000,
     "display": 2000,
@@ -143,6 +143,11 @@ def _clean_filename(filename):
     return filename[:255]
 
 
+def _validate_image_filename(filename):
+    if Path(filename).suffix.lower() not in IMAGE_EXTENSIONS:
+        raise ImageValidationError(IMAGE_TYPE_ERROR)
+
+
 def _copy_upload(upload, destination):
     max_bytes = current_app.config.get(
         "IMAGE_MAX_FILE_BYTES",
@@ -176,10 +181,6 @@ def _copy_upload(upload, destination):
 
 def _open_and_normalize_image(source_path, original_filename):
     max_pixels = current_app.config.get("IMAGE_MAX_PIXELS", DEFAULT_MAX_PIXELS)
-    max_animation_frames = current_app.config.get(
-        "IMAGE_MAX_ANIMATION_FRAMES",
-        DEFAULT_MAX_ANIMATION_FRAMES,
-    )
 
     try:
         with warnings.catch_warnings():
@@ -187,20 +188,14 @@ def _open_and_normalize_image(source_path, original_filename):
             with Image.open(source_path) as source_image:
                 image_format = (source_image.format or "").upper()
                 if image_format not in IMAGE_FORMATS:
-                    raise ImageValidationError(
-                        f"{original_filename} is not a GIF, JPEG, PNG, or WebP image."
-                    )
+                    raise ImageValidationError(IMAGE_TYPE_ERROR)
                 frame_count = getattr(source_image, "n_frames", 1)
-                is_animated = frame_count > 1
-                if is_animated and image_format not in ANIMATED_IMAGE_FORMATS:
+                if frame_count > 1 and image_format == "WEBP":
                     raise ImageValidationError(
-                        f"{original_filename} uses an unsupported animation format."
+                        "Animated .webp files are not allowed."
                     )
-                if frame_count > max_animation_frames:
-                    raise ImageValidationError(
-                        f"{original_filename} has more than "
-                        f"{max_animation_frames:,} animation frames."
-                    )
+                if frame_count > 1:
+                    raise ImageValidationError("Animated images are not allowed.")
 
                 width, height = source_image.size
                 if width < 1 or height < 1 or width * height > max_pixels:
@@ -209,57 +204,38 @@ def _open_and_normalize_image(source_path, original_filename):
                         f"{max_pixels:,}-pixel limit."
                     )
 
-                frames = []
-                durations = []
+                source_image.load()
+                frame = source_image.copy()
+                transposed_frame = ImageOps.exif_transpose(frame)
                 try:
-                    for frame_index in range(frame_count):
-                        source_image.seek(frame_index)
-                        source_image.load()
-                        frame = source_image.copy()
-                        transposed_frame = ImageOps.exif_transpose(frame)
-                        try:
-                            frame_width, frame_height = transposed_frame.size
-                            if (
-                                frame_width < 1
-                                or frame_height < 1
-                                or frame_width * frame_height > max_pixels
-                            ):
-                                raise ImageValidationError(
-                                    f"{original_filename} exceeds the "
-                                    f"{max_pixels:,}-pixel limit."
-                                )
+                    frame_width, frame_height = transposed_frame.size
+                    if (
+                        frame_width < 1
+                        or frame_height < 1
+                        or frame_width * frame_height > max_pixels
+                    ):
+                        raise ImageValidationError(
+                            f"{original_filename} exceeds the "
+                            f"{max_pixels:,}-pixel limit."
+                        )
 
-                            has_transparency = (
-                                is_animated
-                                or transposed_frame.mode in {"RGBA", "LA"}
-                                or (
-                                    transposed_frame.mode == "P"
-                                    and "transparency" in transposed_frame.info
-                                )
-                            )
-                            frames.append(
-                                transposed_frame.convert(
-                                    "RGBA" if has_transparency else "RGB"
-                                )
-                            )
-                            if is_animated:
-                                duration = source_image.info.get("duration", 100)
-                                try:
-                                    duration = int(duration)
-                                except (TypeError, ValueError):
-                                    duration = 100
-                                durations.append(max(duration, 20))
-                        finally:
-                            if transposed_frame is not frame:
-                                transposed_frame.close()
-                            frame.close()
-                except Exception:
-                    for frame in frames:
-                        frame.close()
-                    raise
+                    has_transparency = (
+                        transposed_frame.mode in {"RGBA", "LA"}
+                        or (
+                            transposed_frame.mode == "P"
+                            and "transparency" in transposed_frame.info
+                        )
+                    )
+                    normalized_frame = transposed_frame.convert(
+                        "RGBA" if has_transparency else "RGB"
+                    )
+                finally:
+                    if transposed_frame is not frame:
+                        transposed_frame.close()
+                    frame.close()
 
-                width, height = frames[0].size
-                return frames, width, height, is_animated, durations
+                width, height = normalized_frame.size
+                return [normalized_frame], width, height
     except ImageValidationError:
         raise
     except (
@@ -274,7 +250,7 @@ def _open_and_normalize_image(source_path, original_filename):
         ) from error
 
 
-def _write_variants(frames, directory, is_animated, durations):
+def _write_variants(frames, directory):
     byte_sizes = {}
     try:
         variants_by_size = {}
@@ -309,17 +285,8 @@ def _write_variants(frames, directory, is_animated, durations):
                         IMAGE_VARIANT_QUALITY[variant]
                         for variant in variants
                     ),
-                    "method": 0 if is_animated else 6,
+                    "method": 6,
                 }
-                if is_animated:
-                    save_options.update(
-                        {
-                            "save_all": True,
-                            "append_images": resized_frames[1:],
-                            "duration": durations,
-                            "loop": 1,
-                        }
-                    )
                 resized_frames[0].save(destination, **save_options)
                 byte_sizes[primary_variant] = destination.stat().st_size
                 for variant in variants[1:]:
@@ -340,6 +307,7 @@ def process_uploaded_image(upload, upload_session, user_id):
     """Validate and atomically persist one upload, returning its model and size."""
     upload_session = normalize_uuid(upload_session, "upload session")
     original_filename = _clean_filename(upload.filename)
+    _validate_image_filename(original_filename)
     root = get_upload_root()
     temporary_root = root / ".tmp"
     temporary_root.mkdir(parents=True, exist_ok=True)
@@ -357,17 +325,12 @@ def process_uploaded_image(upload, upload_session, user_id):
 
     try:
         source_bytes = _copy_upload(upload, source_path)
-        frames, width, height, is_animated, durations = _open_and_normalize_image(
+        frames, width, height = _open_and_normalize_image(
             source_path,
             original_filename,
         )
         try:
-            variant_sizes = _write_variants(
-                frames,
-                temporary_directory,
-                is_animated,
-                durations,
-            )
+            variant_sizes = _write_variants(frames, temporary_directory)
         finally:
             for frame in frames:
                 frame.close()
@@ -638,15 +601,6 @@ def cleanup_unreferenced_images(cutoff):
     return asset_ids
 
 
-def is_animated_asset(asset_or_id):
-    """Return whether a stored WebP asset contains multiple frames."""
-    try:
-        with Image.open(get_variant_path(asset_or_id, "display")) as image:
-            return getattr(image, "n_frames", 1) > 1
-    except (OSError, UnidentifiedImageError, ValueError):
-        return False
-
-
 def image_to_dict(asset):
     return {
         "id": asset.id,
@@ -668,7 +622,6 @@ def image_to_dict(asset):
             image_id=asset.id,
             variant="master",
         ),
-        "animated": is_animated_asset(asset),
         "attached": asset.page_id is not None,
     }
 
@@ -740,18 +693,6 @@ def sanitize_rendered_html(rendered_html):
             image_tag = image_tag.replace("<img", '<img loading="lazy"', 1)
         if " decoding=" not in image_tag:
             image_tag = image_tag.replace("<img", '<img decoding="async"', 1)
-        source_match = re.search(r'\bsrc="([^"]+)"', image_tag)
-        if source_match is not None:
-            local_source = LOCAL_IMAGE_URL_PATTERN.fullmatch(source_match.group(1))
-            if (
-                local_source is not None
-                and is_animated_asset(local_source.group("image_id"))
-            ):
-                image_tag = image_tag.replace(
-                    "<img",
-                    '<img class="animated-image"',
-                    1,
-                )
         return image_tag
 
     return IMAGE_TAG_PATTERN.sub(enhance_image, sanitized_html)

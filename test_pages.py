@@ -971,6 +971,19 @@ class PageCreationTestCase(unittest.TestCase):
             self.assertNotIn(b">Log Out</button>", response.data)
             self.assertIn(b'href="/static/style.css"', response.data)
 
+        stylesheet_response = self.client.get("/static/style.css")
+        self.assertEqual(stylesheet_response.status_code, 200)
+        stylesheet = stylesheet_response.data
+        self.assertIn(b".wiki-page-body {", stylesheet)
+        self.assertIn(b"font-family: Arial, Helvetica, sans-serif;", stylesheet)
+        self.assertIn(b"line-height: 1.5;", stylesheet)
+        self.assertIn(b"max-width: 60ch;", stylesheet)
+        self.assertIn(b"padding-left: 1rem;", stylesheet)
+        self.assertIn(b"text-align: left;", stylesheet)
+        self.assertIn(b"max-height: calc(100svh - 2rem);", stylesheet)
+        self.assertIn(b"object-fit: contain;", stylesheet)
+        stylesheet_response.close()
+
     def test_registration_requires_and_consumes_a_one_time_invite_key(self):
         invite_key = "test-invite-key-that-is-long-enough"
         with self.app.app_context():
@@ -1974,7 +1987,7 @@ class PageCreationTestCase(unittest.TestCase):
         self.app.config["IMAGE_STORAGE_LIMIT_BYTES"] = 45 * 1024 * 1024 * 1024
 
 
-    def test_animated_webp_and_gif_uploads_play_once_and_are_marked(self):
+    def test_gif_uploads_are_rejected_with_allowed_filetypes(self):
         def make_animation(image_format):
             first_frame = Image.new("RGBA", (16, 16), (255, 0, 0, 255))
             second_frame = Image.new("RGBA", (16, 16), (0, 0, 255, 255))
@@ -1992,55 +2005,77 @@ class PageCreationTestCase(unittest.TestCase):
             animation.seek(0)
             return animation
 
-        upload_session = str(uuid4())
         upload_response = self.client.post(
             "/images/upload",
             data={
-                "upload_session": upload_session,
-                "images": [
-                    (make_animation("WEBP"), "sparkle.webp"),
-                    (make_animation("GIF"), "sparkle.gif"),
-                ],
+                "upload_session": str(uuid4()),
+                "images": (make_animation("GIF"), "sparkle.gif"),
+            },
+            content_type="multipart/form-data",
+        )
+
+        self.assertEqual(upload_response.status_code, 400)
+        self.assertEqual(
+            upload_response.get_json()["error"],
+            "Only JPEG, PNG, and WebP images are allowed.",
+        )
+        with self.app.app_context():
+            self.assertEqual(models.ImageAssets.query.count(), 0)
+
+        form_response = self.client.get("/pages/new")
+        self.assertNotIn(b"image/gif", form_response.data)
+        self.assertNotIn(b"animated-images.js", form_response.data)
+
+    def test_animated_webp_uploads_are_rejected(self):
+        first_frame = Image.new("RGBA", (16, 16), (255, 0, 0, 255))
+        second_frame = Image.new("RGBA", (16, 16), (0, 0, 255, 255))
+        animation = io.BytesIO()
+        first_frame.save(
+            animation,
+            format="WEBP",
+            save_all=True,
+            append_images=[second_frame],
+            duration=[80, 120],
+            loop=0,
+        )
+        first_frame.close()
+        second_frame.close()
+        animation.seek(0)
+
+        upload_response = self.client.post(
+            "/images/upload",
+            data={
+                "upload_session": str(uuid4()),
+                "images": (animation, "sparkle.webp"),
+            },
+            content_type="multipart/form-data",
+        )
+
+        self.assertEqual(upload_response.status_code, 400)
+        self.assertEqual(
+            upload_response.get_json()["error"],
+            "Animated .webp files are not allowed.",
+        )
+        with self.app.app_context():
+            self.assertEqual(models.ImageAssets.query.count(), 0)
+
+    def test_static_webp_upload_is_allowed(self):
+        upload_response = self.client.post(
+            "/images/upload",
+            data={
+                "upload_session": str(uuid4()),
+                "images": (
+                    self.make_image_upload(image_format="WEBP"),
+                    "portrait.webp",
+                ),
             },
             content_type="multipart/form-data",
         )
 
         self.assertEqual(upload_response.status_code, 201)
-        uploaded_images = upload_response.get_json()["images"]
-        self.assertEqual(len(uploaded_images), 2)
-        self.assertTrue(all(image["animated"] for image in uploaded_images))
-
-        with self.app.app_context():
-            from image_service import get_variant_path
-
-            for uploaded_image in uploaded_images:
-                for variant in ("master", "display", "thumbnail"):
-                    with Image.open(
-                        get_variant_path(uploaded_image["id"], variant)
-                    ) as stored_image:
-                        self.assertEqual(stored_image.format, "WEBP")
-                        self.assertEqual(stored_image.n_frames, 2)
-                        self.assertEqual(stored_image.info.get("loop"), 1)
-
-        image_markdown = "\n\n".join(
-            f"![Animated image]({image['display_url']})"
-            for image in uploaded_images
-        )
-        create_response = self.client.post(
-            "/pages/new",
-            data={
-                "image_upload_session": upload_session,
-                "title": "Animated Gallery",
-                "body_markdown": image_markdown,
-            },
-        )
-        self.assertEqual(create_response.status_code, 302)
-
-        view_response = self.client.get("/pages/view/animated-gallery")
-        self.assertEqual(view_response.status_code, 200)
-        self.assertEqual(view_response.data.count(b'class="animated-image"'), 2)
-        self.assertIn(b"hover to replay", view_response.data)
-        self.assertIn(b'replayUrl.searchParams.set("replay"', view_response.data)
+        uploaded_image = upload_response.get_json()["images"][0]
+        self.assertEqual(uploaded_image["filename"], "portrait.webp")
+        self.assertNotIn("animated", uploaded_image)
 
     def test_image_management_requires_a_valid_csrf_token(self):
         self.app.config["WTF_CSRF_ENABLED"] = True
