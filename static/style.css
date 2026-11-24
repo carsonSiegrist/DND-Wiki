@@ -378,7 +378,7 @@ dialog::backdrop {
     font-family: Arial, Helvetica, sans-serif;
     line-height: 1.5;
     max-width: 60ch;
-    padding-left: 1rem;
+    padding-left: 2rem;
     text-align: left;
     font-size: clamp(1rem, 0.9rem + 0.5vw, 1.25rem);
 }

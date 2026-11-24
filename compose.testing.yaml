@@ -1,4 +1,0 @@
-services:
-  caddy:
-    volumes:
-      - ./deploy/Caddyfile.testing:/etc/caddy/Caddyfile:ro,Z
