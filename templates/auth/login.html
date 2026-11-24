@@ -23,6 +23,11 @@
             {% endfor %}
         </p>
 
+        <p>
+            {{ form.stay_logged_in() }}
+            {{ form.stay_logged_in.label }}
+        </p>
+
         {{ form.submit() }}
     </form>
 

@@ -1,5 +1,5 @@
 from flask_wtf import FlaskForm
-from wtforms import PasswordField, StringField, SubmitField
+from wtforms import BooleanField, PasswordField, StringField, SubmitField
 from wtforms.validators import DataRequired, Email, EqualTo, Length, ValidationError
 import models
 
@@ -77,6 +77,7 @@ class LoginForm(FlaskForm):
         ],
     )
 
+    stay_logged_in = BooleanField("Stay logged in")
 
     submit = SubmitField("Submit")
 

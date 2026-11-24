@@ -978,7 +978,7 @@ class PageCreationTestCase(unittest.TestCase):
         self.assertIn(b"font-family: Arial, Helvetica, sans-serif;", stylesheet)
         self.assertIn(b"line-height: 1.5;", stylesheet)
         self.assertIn(b"max-width: 60ch;", stylesheet)
-        self.assertIn(b"padding-left: 1rem;", stylesheet)
+        self.assertIn(b"padding-left: 2rem;", stylesheet)
         self.assertIn(b"text-align: left;", stylesheet)
         self.assertIn(b"max-height: calc(100svh - 2rem);", stylesheet)
         self.assertIn(b"object-fit: contain;", stylesheet)
@@ -1045,6 +1045,58 @@ class PageCreationTestCase(unittest.TestCase):
                 models.User.query.filter_by(username="second-invited-user").first()
             )
 
+    def test_stay_logged_in_is_opt_in_and_survives_browser_session(self):
+        login_client = self.app.test_client()
+        login_page = login_client.get("/auth/login")
+        self.assertIn(b'name="stay_logged_in"', login_page.data)
+        self.assertIn(b"Stay logged in", login_page.data)
+
+        session_only_response = login_client.post(
+            "/auth/login",
+            data={
+                "username": "page-author",
+                "password": "test-password",
+            },
+        )
+        self.assertEqual(session_only_response.status_code, 302)
+        self.assertIsNone(login_client.get_cookie("remember_token"))
+        session_cookie = login_client.get_cookie(
+            self.app.config["SESSION_COOKIE_NAME"]
+        )
+        self.assertIsNotNone(session_cookie)
+        self.assertIsNone(session_cookie.expires)
+
+        login_client.get("/auth/logout")
+        remembered_response = login_client.post(
+            "/auth/login",
+            data={
+                "username": "page-author",
+                "password": "test-password",
+                "stay_logged_in": "y",
+            },
+        )
+        self.assertEqual(remembered_response.status_code, 302)
+        remember_cookie = login_client.get_cookie("remember_token")
+        self.assertIsNotNone(remember_cookie)
+        self.assertIsNotNone(remember_cookie.expires)
+        self.assertTrue(remember_cookie.http_only)
+        self.assertEqual(remember_cookie.same_site, "Lax")
+        self.assertEqual(
+            remember_cookie.secure,
+            self.app.config["SESSION_COOKIE_SECURE"],
+        )
+        self.assertEqual(
+            self.app.config["REMEMBER_COOKIE_DURATION"],
+            timedelta(days=30),
+        )
+
+        login_client.delete_cookie(self.app.config["SESSION_COOKIE_NAME"])
+        restored_response = login_client.get("/pages/new")
+        self.assertEqual(restored_response.status_code, 200)
+
+        login_client.get("/auth/logout")
+        self.assertIsNone(login_client.get_cookie("remember_token"))
+
     def test_invite_generator_stores_only_hashes(self):
         with self.app.app_context():
             invite_keys = create_invite_keys(2)
@@ -1061,6 +1113,19 @@ class PageCreationTestCase(unittest.TestCase):
         self.assertTrue(all(key not in stored_hashes for key in invite_keys))
 
     def test_password_reset_is_one_time_and_revokes_existing_sessions(self):
+        remembered_client = self.app.test_client()
+        remembered_login = remembered_client.post(
+            "/auth/login",
+            data={
+                "username": "page-author",
+                "password": "test-password",
+                "stay_logged_in": "y",
+            },
+        )
+        self.assertEqual(remembered_login.status_code, 302)
+        self.assertIsNotNone(remembered_client.get_cookie("remember_token"))
+        remembered_client.delete_cookie(self.app.config["SESSION_COOKIE_NAME"])
+
         with self.app.app_context():
             first_token, first_username, _ = create_password_reset(
                 "page-author", 60
@@ -1118,6 +1183,13 @@ class PageCreationTestCase(unittest.TestCase):
         revoked_session_response = self.client.get("/pages/new")
         self.assertEqual(revoked_session_response.status_code, 302)
         self.assertIn("/auth/login", revoked_session_response.headers["Location"])
+
+        revoked_remembered_response = remembered_client.get("/pages/new")
+        self.assertEqual(revoked_remembered_response.status_code, 302)
+        self.assertIn(
+            "/auth/login",
+            revoked_remembered_response.headers["Location"],
+        )
 
         old_password_response = reset_client.post(
             "/auth/login",

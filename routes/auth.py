@@ -111,7 +111,7 @@ def login():
         user = models.User.query.filter_by(username=form.username.data).first()
         
         if user and user.check_password(form.password.data):
-            login_user(user)
+            login_user(user, remember=form.stay_logged_in.data)
             return redirect(url_for("main.index")) 
         
         flash("Invalid username or password, please try again.", "error") 
